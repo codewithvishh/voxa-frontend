@@ -1502,11 +1502,10 @@ export default function App() {
             </div>
             <div className="crest-titles">
               <div className="brand-wordmark">
-                VOXA<span className="brand-dot-pulse">.</span>
+                Voxa<span className="brand-dot-pulse">.</span>
               </div>
-              <div className="studio-spec-badge">
-                <span className="studio-led-active"></span>
-                <span>STUDIO CONSOLE</span>
+              <div className="brand-byline">
+                by Vishal
               </div>
             </div>
           </div>

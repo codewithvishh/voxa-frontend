@@ -154,24 +154,13 @@
   50% { opacity: 0.4; filter: none; }
 }
 
-.studio-spec-badge {
-  font-family: var(--font-mono);
-  font-size: 0.58rem;
-  font-weight: 800;
-  letter-spacing: 0.12em;
-  color: #10b981;
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  margin-top: 2px;
-}
-
-.studio-led-active {
-  width: 4px;
-  height: 4px;
-  border-radius: 50%;
-  background: #10b981;
-  box-shadow: 0 0 6px #10b981;
+.brand-byline {
+  font-family: var(--font-display);
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  letter-spacing: 0.04em;
+  margin-top: 1px;
 }
 
 /* Dual Analog VU Peak Meters */
