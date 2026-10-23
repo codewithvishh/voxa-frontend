@@ -1,5 +1,9 @@
 const BASE_URL = '/api';
 
+// High-speed in-memory LRU search and autocomplete caches
+const searchCache = new Map();
+const suggestionCache = new Map();
+
 function getAuthHeaders(endpoint = '') {
   const headers = { 'Content-Type': 'application/json' };
   // Never send Authorization header on public registration/login/otp endpoints
@@ -187,11 +191,17 @@ export const api = {
 
   // Search with unified fallback and live catalog merging
   // Search with backend proxy + authentic original movie soundtrack artwork matching
+  // Search with ultra-fast parallel queries + in-memory cache
   search: async (q, type = 'all') => {
     const rawQ = (q || '').trim();
     if (!rawQ) return { content: [], totalElements: 0 };
 
-    // Extract core song title (e.g., "Qaafirana" from "Qaafirana - Arijit Singh & Nikhita Gandhi Vocals Only")
+    const cacheKey = rawQ.toLowerCase();
+    if (searchCache.has(cacheKey)) {
+      return searchCache.get(cacheKey);
+    }
+
+    // Extract core song title (e.g., "Qaafirana" from "Qaafirana - Arijit Singh Vocals Only")
     const cleanQ = rawQ
       .replace(/\(from ".*?"\)/gi, '')
       .replace(/\(from '.*?'\)/gi, '')
@@ -205,21 +215,6 @@ export const api = {
       .trim();
 
     const searchTarget = cleanQ || rawQ;
-
-    // 1. Try our high-speed backend search endpoint first
-    try {
-      const res = await request(`/search?q=${encodeURIComponent(searchTarget)}`);
-      if (res && res.content && Array.isArray(res.content) && res.content.length > 0) {
-        // Return sorted with highest play counts (original movie soundtracks) at the top
-        const sorted = [...res.content].sort((a, b) => (b.playCount || 0) - (a.playCount || 0));
-        return { content: sorted, totalElements: sorted.length };
-      }
-    } catch (backendErr) {
-      console.warn('Backend search note:', backendErr);
-    }
-
-    // 2. Direct cloud search fallback with authentic artwork scoring
-    let combined = [];
     const searchQueries = Array.from(new Set([searchTarget, rawQ].filter(Boolean)));
 
     const getOriginalScore = (item) => {
@@ -247,40 +242,83 @@ export const api = {
 
     const bestByNorm = new Map();
 
-    for (const searchQuery of searchQueries) {
-      try {
-        const url = `https://www.jiosaavn.com/api.php?__call=search.getResults&_format=json&_marker=0&api_version=4&ctx=web6dot0&n=35&p=1&q=${encodeURIComponent(searchQuery)}`;
-        const response = await fetch(url);
-        const data = await response.json();
-        if (data && data.results && Array.isArray(data.results)) {
-          for (const item of data.results) {
-            const rawTitle = item.title || 'Unknown Title';
-            const cleanTitle = rawTitle
-              .replace(/&quot;/g, '"')
-              .replace(/&amp;/g, '&')
-              .replace(/&#039;/g, "'");
+    // 1. Kick off backend search and cloud searches in PARALLEL
+    const fetchPromises = [
+      // Backend catalog query
+      request(`/search?q=${encodeURIComponent(searchTarget)}`)
+        .then(res => ({ type: 'backend', data: res }))
+        .catch(err => ({ type: 'backend', err })),
+      
+      // Cloud catalog queries (executed concurrently!)
+      ...searchQueries.map(sq => {
+        const url = `https://www.jiosaavn.com/api.php?__call=search.getResults&_format=json&_marker=0&api_version=4&ctx=web6dot0&n=35&p=1&q=${encodeURIComponent(sq)}`;
+        return fetch(url, { signal: AbortSignal.timeout(3500) })
+          .then(r => r.json())
+          .then(data => ({ type: 'cloud', data }))
+          .catch(err => ({ type: 'cloud', err }));
+      })
+    ];
 
-            const norm = normalizeTitle(cleanTitle);
-            if (!norm) continue;
+    const settled = await Promise.allSettled(fetchPromises);
 
-            const score = getOriginalScore(item);
-            const playCount = Number(item.play_count || 0);
+    // Process all results from backend and cloud
+    for (const outcome of settled) {
+      if (outcome.status !== 'fulfilled') continue;
+      const val = outcome.value;
+      if (!val) continue;
 
-            if (!bestByNorm.has(norm)) {
+      if (val.type === 'backend' && val.data?.content && Array.isArray(val.data.content)) {
+        for (const item of val.data.content) {
+          const norm = normalizeTitle(item.title);
+          if (!norm) continue;
+          if (!bestByNorm.has(norm)) {
+            bestByNorm.set(norm, {
+              item: {
+                id: item.id,
+                title: item.title,
+                subtitle: item.artistName,
+                image: item.imageUrl,
+                more_info: {
+                  album: item.albumName,
+                  duration: item.durationSec,
+                  vlink: item.audioUrl
+                },
+                language: item.genre,
+                play_count: item.playCount
+              },
+              cleanTitle: item.title,
+              score: 80,
+              playCount: Number(item.playCount || 100000)
+            });
+          }
+        }
+      } else if (val.type === 'cloud' && val.data?.results && Array.isArray(val.data.results)) {
+        for (const item of val.data.results) {
+          const rawTitle = item.title || 'Unknown Title';
+          const cleanTitle = rawTitle
+            .replace(/&quot;/g, '"')
+            .replace(/&amp;/g, '&')
+            .replace(/&#039;/g, "'");
+
+          const norm = normalizeTitle(cleanTitle);
+          if (!norm) continue;
+
+          const score = getOriginalScore(item);
+          const playCount = Number(item.play_count || 0);
+
+          if (!bestByNorm.has(norm)) {
+            bestByNorm.set(norm, { item, cleanTitle, score, playCount });
+          } else {
+            const existing = bestByNorm.get(norm);
+            if (score > existing.score || (score === existing.score && playCount > existing.playCount)) {
               bestByNorm.set(norm, { item, cleanTitle, score, playCount });
-            } else {
-              const existing = bestByNorm.get(norm);
-              if (score > existing.score || (score === existing.score && playCount > existing.playCount)) {
-                bestByNorm.set(norm, { item, cleanTitle, score, playCount });
-              }
             }
           }
         }
-      } catch (err) {
-        console.warn('Cloud catalog fetch notice:', err);
       }
     }
 
+    const combined = [];
     for (const { item, cleanTitle, playCount } of bestByNorm.values()) {
       const cleanArtist = (item.subtitle || 'Bollywood Artist')
         .replace(/&quot;/g, '"')
@@ -291,7 +329,6 @@ export const api = {
       const preview = item.more_info?.media_preview_url || '';
       const audioUrl = vlink || preview || 'https://jiotunepreview.jio.com/content/Converted/010910393154234.mp3';
 
-      // High fidelity 500x500 authentic album/movie poster artwork
       const rawImg = (item.image || '').replace(/^http:/, 'https:');
       const imageUrl = rawImg
         .replace('150x150', '500x500')
@@ -315,27 +352,35 @@ export const api = {
       });
     }
 
-    // Sort so authentic original movie albums with highest plays appear at the very top
     combined.sort((a, b) => (b.playCount || 0) - (a.playCount || 0));
 
-    return { content: combined, totalElements: combined.length };
+    const finalResult = { content: combined, totalElements: combined.length };
+    if (searchCache.size > 120) searchCache.clear();
+    searchCache.set(cacheKey, finalResult);
+
+    return finalResult;
   },
   getSuggestions: async (q) => {
     if (!q || q.trim().length < 2) return { suggestions: [], songs: [], artists: [] };
     const clean = q.trim();
+    const cacheKey = clean.toLowerCase();
+    if (suggestionCache.has(cacheKey)) {
+      return suggestionCache.get(cacheKey);
+    }
     try {
       const res = await request(`/search/suggest?q=${encodeURIComponent(clean)}`);
       if (res && (res.suggestions?.length || res.songs?.length || res.artists?.length)) {
+        if (suggestionCache.size > 150) suggestionCache.clear();
+        suggestionCache.set(cacheKey, res);
         return res;
       }
     } catch (e) {
-      console.warn('Backend suggestions failed, trying live autocomplete:', e);
+      console.warn('Backend suggestions notice:', e);
     }
 
-    // Direct cloud autocomplete fallback
     try {
       const url = `https://www.jiosaavn.com/api.php?__call=autocomplete.get&_format=json&_marker=0&api_version=4&ctx=web6dot0&query=${encodeURIComponent(clean)}`;
-      const response = await fetch(url);
+      const response = await fetch(url, { signal: AbortSignal.timeout(2000) });
       const data = await response.json();
       const suggestions = [];
       const songs = [];
@@ -369,7 +414,10 @@ export const api = {
           });
         });
       }
-      return { query: clean, suggestions, songs, artists };
+      const res = { query: clean, suggestions, songs, artists };
+      if (suggestionCache.size > 150) suggestionCache.clear();
+      suggestionCache.set(cacheKey, res);
+      return res;
     } catch (err) {
       return { suggestions: [], songs: [], artists: [] };
     }

@@ -225,6 +225,9 @@ export async function buildDynamicEraRadio(currentSong, searchApi) {
 
     for (const item of list) {
       if (!item) continue;
+      const itemVibe = detectSongVibeAndEra(item);
+      if (itemVibe.era !== vibe.era) continue; // STRICT ERA GUARANTEE: Must match current playing song's era
+
       const songNorm = normalizeSongTitle(item.title);
       const songRoot = getRootTitleWords(item.title);
 
@@ -252,6 +255,9 @@ export async function buildDynamicEraRadio(currentSong, searchApi) {
 
       for (const item of fallbackList) {
         if (!item) continue;
+        const itemVibe = detectSongVibeAndEra(item);
+        if (itemVibe.era !== vibe.era) continue; // STRICT ERA GUARANTEE
+
         const songNorm = normalizeSongTitle(item.title);
         const songRoot = getRootTitleWords(item.title);
 
@@ -316,6 +322,9 @@ export async function fetchSimilarGenerationSongs(currentSong, playedSongIds = n
 
     for (const item of list) {
       if (!item) continue;
+      const itemVibe = detectSongVibeAndEra(item);
+      if (itemVibe.era !== vibe.era) continue; // STRICT ERA GUARANTEE
+
       const songNorm = normalizeSongTitle(item.title);
       const songRoot = getRootTitleWords(item.title);
 

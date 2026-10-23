@@ -4,7 +4,8 @@ import {
   Play, Pause, SkipForward, SkipBack, Shuffle, Repeat, Volume2, VolumeX,
   Heart, Search, Home, Compass, Library, Plus, Shield, History,
   LogOut, User as UserIcon, Music, Disc, Sparkles, CheckCircle, AlertCircle,
-  Clock, Flame, RefreshCw, Radio, ListMusic, ChevronDown, Share2, FileText, Maximize2, Minimize2
+  Clock, Flame, RefreshCw, Radio, ListMusic, ChevronDown, Share2, FileText, Maximize2, Minimize2,
+  Trash2, ListPlus, FolderPlus
 } from 'lucide-react';
 import {
   detectSongVibeAndEra,
@@ -49,6 +50,9 @@ export default function App() {
   const [featuredAlbums, setFeaturedAlbums] = useState([]);
   const [popularArtists, setPopularArtists] = useState([]);
   const [playlists, setPlaylists] = useState([]);
+  const [selectedPlaylist, setSelectedPlaylist] = useState(null);
+  const [addToPlaylistSong, setAddToPlaylistSong] = useState(null);
+  const [quickPlaylistTitle, setQuickPlaylistTitle] = useState('');
   const [likedSongIds, setLikedSongIds] = useState(new Set());
   const [likedSongsList, setLikedSongsList] = useState([]);
   const [playHistoryList, setPlayHistoryList] = useState([]);
@@ -580,8 +584,10 @@ export default function App() {
   };
 
   /**
-   * Main entry point to play any song with Dynamic Era Radio
-   * (Enforces Mandatory Login, Dynamic Era Query, and Zero Hardcoded Songs)
+   * Main entry point to play any song with Amazon Music / Spotify style Dynamic Era Autoplay
+   * - ZERO hardcoded songs
+   * - If a modern song plays -> strictly modern songs play next
+   * - If a retro song plays -> strictly retro songs play next
    */
   const playSong = async (song, contextList = null, options = {}) => {
     if (!song) return;
@@ -604,8 +610,10 @@ export default function App() {
     // New song selected: Play immediately
     playTrackDirect(song);
 
-    // If played from a distinct playlist/album (and NOT Era Radio mode), play that playlist
-    if (contextList && Array.isArray(contextList) && contextList.length > 0 && !options.isSpotifyRadio) {
+    const songVibe = detectSongVibeAndEra(song);
+
+    // If played from an explicit user-created playlist in Library, preserve playlist sequence
+    if (options.isExplicitPlaylist && contextList && Array.isArray(contextList) && contextList.length > 0) {
       const selectedNorm = normalizeSongTitle(song.title);
       const selectedRoot = getRootTitleWords(song.title);
       const seenTitles = new Set([selectedNorm]);
@@ -615,7 +623,6 @@ export default function App() {
       for (const item of contextList) {
         if (!item || item.id === song.id) continue;
         const norm = normalizeSongTitle(item.title);
-        // Exclude duplicate editions and remixes of the clicked track
         if (norm === selectedNorm || (selectedRoot.length >= 4 && norm.includes(selectedRoot))) continue;
         if (!seenTitles.has(norm)) {
           seenTitles.add(norm);
@@ -627,16 +634,52 @@ export default function App() {
       setQueueIndex(0);
       preloadSimilarEraSongs(song, uniqueList);
     } else {
-      // DYNAMIC ERA RADIO: Query live cloud catalog for this exact era & artist
-      setPlaybackQueue([song]);
+      // AMAZON MUSIC / SPOTIFY AUTOPLAY:
+      // 1. Filter any contextList to STRICTLY include songs of the EXACT same era
+      const initialSameEraQueue = [song];
+      const seenTitles = new Set([normalizeSongTitle(song.title)]);
+
+      if (contextList && Array.isArray(contextList)) {
+        for (const item of contextList) {
+          if (!item || item.id === song.id) continue;
+          const itemVibe = detectSongVibeAndEra(item);
+          // STRICT ERA GUARANTEE: Only include if same musical era
+          if (itemVibe.era === songVibe.era) {
+            const norm = normalizeSongTitle(item.title);
+            const songRoot = getRootTitleWords(song.title);
+            if (norm !== normalizeSongTitle(song.title) && !(songRoot.length >= 4 && norm.includes(songRoot)) && !seenTitles.has(norm)) {
+              seenTitles.add(norm);
+              initialSameEraQueue.push(item);
+            }
+          }
+        }
+      }
+
+      setPlaybackQueue(initialSameEraQueue);
       setQueueIndex(0);
 
+      // 2. Concurrently query live cloud catalog for infinite era autoplay matching this song's exact era and artist
       buildDynamicEraRadio(song, api.search).then(eraRadio => {
         if (eraRadio && eraRadio.length > 1) {
-          setPlaybackQueue(eraRadio);
+          setPlaybackQueue(prev => {
+            const existingIds = new Set(prev.map(s => String(s.id || s.sourceId)));
+            const existingTitles = new Set(prev.map(s => normalizeSongTitle(s.title)));
+            const additions = [];
+            for (const item of eraRadio) {
+              const sid = String(item.id || item.sourceId);
+              const snorm = normalizeSongTitle(item.title);
+              const itemVibe = detectSongVibeAndEra(item);
+              if (itemVibe.era === songVibe.era && !existingIds.has(sid) && !existingTitles.has(snorm)) {
+                existingIds.add(sid);
+                existingTitles.add(snorm);
+                additions.push(item);
+              }
+            }
+            return [...prev, ...additions];
+          });
         }
       }).catch(err => {
-        console.warn('Dynamic era radio error:', err);
+        console.warn('Dynamic era radio notice:', err);
       });
     }
   };
@@ -672,6 +715,7 @@ export default function App() {
     const currentTrack = currentSong;
     const currentNorm = currentTrack ? normalizeSongTitle(currentTrack.title) : '';
     const currentRoot = currentTrack ? getRootTitleWords(currentTrack.title) : '';
+    const currentVibe = currentTrack ? detectSongVibeAndEra(currentTrack) : null;
 
     if (isRepeat && currentTrack) {
       audioRef.current.currentTime = 0;
@@ -683,7 +727,8 @@ export default function App() {
       const differentTracks = currentQ.filter((t, i) => {
         if (i === curIdx) return false;
         const norm = normalizeSongTitle(t.title);
-        return norm !== currentNorm && !(currentRoot.length >= 4 && norm.includes(currentRoot));
+        const matchesEra = !currentVibe || detectSongVibeAndEra(t).era === currentVibe.era;
+        return matchesEra && norm !== currentNorm && !(currentRoot.length >= 4 && norm.includes(currentRoot));
       });
       if (differentTracks.length > 0) {
         const picked = differentTracks[Math.floor(Math.random() * differentTracks.length)];
@@ -706,7 +751,10 @@ export default function App() {
           (currentRoot.length >= 4 && candidateNorm.includes(currentRoot)) ||
           (candidateRoot.length >= 4 && currentNorm.includes(candidateRoot))
         );
-        if (!isDuplicate) {
+        const candidateVibe = detectSongVibeAndEra(candidate);
+        const matchesEra = !currentVibe || candidateVibe.era === currentVibe.era;
+
+        if (!isDuplicate && matchesEra) {
           break;
         }
       }
@@ -1364,6 +1412,179 @@ export default function App() {
       setNewPlaylistTitle('');
       setNewPlaylistDesc('');
     }
+  };
+
+  // --------------------------------------------------------------------------
+  // Delete Playlist Handler
+  // --------------------------------------------------------------------------
+  const handleDeletePlaylist = async (playlistId, playlistTitle = 'Playlist') => {
+    if (!window.confirm(`Are you sure you want to delete playlist "${playlistTitle}"?`)) {
+      return;
+    }
+    const userKey = currentUser?.id || currentUser?.email || 'guest';
+    const storageKey = currentUser ? `voxa_playlists_${userKey}` : 'voxa_playlists_guest';
+
+    setPlaylists(prev => prev.filter(p => p.id !== playlistId));
+    if (selectedPlaylist && selectedPlaylist.id === playlistId) {
+      setSelectedPlaylist(null);
+    }
+
+    try {
+      const current = JSON.parse(localStorage.getItem(storageKey) || '[]');
+      localStorage.setItem(storageKey, JSON.stringify(current.filter(p => p.id !== playlistId)));
+    } catch (_) {}
+
+    if (currentUser) {
+      try {
+        await api.deletePlaylist(playlistId);
+      } catch (err) {
+        console.warn('Backend delete playlist notice:', err);
+      }
+    }
+
+    setShareToast(`Deleted playlist "${playlistTitle}"`);
+    setTimeout(() => setShareToast(null), 3000);
+  };
+
+  // --------------------------------------------------------------------------
+  // Add Song to Playlist Handler
+  // --------------------------------------------------------------------------
+  const handleAddSongToPlaylist = async (playlistId, song) => {
+    if (!playlistId || !song) return;
+    const targetPlaylist = playlists.find(p => p.id === playlistId);
+    const plTitle = targetPlaylist?.title || targetPlaylist?.name || 'Playlist';
+    const userKey = currentUser?.id || currentUser?.email || 'guest';
+    const storageKey = currentUser ? `voxa_playlists_${userKey}` : 'voxa_playlists_guest';
+
+    const existingSongs = targetPlaylist?.songs || [];
+    if (existingSongs.some(s => s.id === song.id || (s.title && song.title && s.title.toLowerCase() === song.title.toLowerCase()))) {
+      setShareToast(`"${song.title}" is already in "${plTitle}"`);
+      setTimeout(() => setShareToast(null), 3000);
+      setAddToPlaylistSong(null);
+      return;
+    }
+
+    const updatedSongs = [...existingSongs, song];
+
+    setPlaylists(prev => prev.map(p => {
+      if (p.id === playlistId) {
+        return { ...p, songs: updatedSongs, songCount: updatedSongs.length };
+      }
+      return p;
+    }));
+
+    if (selectedPlaylist && selectedPlaylist.id === playlistId) {
+      setSelectedPlaylist(prev => ({ ...prev, songs: updatedSongs, songCount: updatedSongs.length }));
+    }
+
+    try {
+      const current = JSON.parse(localStorage.getItem(storageKey) || '[]');
+      const updatedList = current.map(p => {
+        if (p.id === playlistId) {
+          return { ...p, songs: updatedSongs, songCount: updatedSongs.length };
+        }
+        return p;
+      });
+      localStorage.setItem(storageKey, JSON.stringify(updatedList));
+    } catch (_) {}
+
+    if (currentUser) {
+      try {
+        await api.addSongToPlaylist(playlistId, song.id);
+      } catch (err) {
+        console.warn('Backend add song notice:', err);
+      }
+    }
+
+    setShareToast(`Added "${song.title}" to "${plTitle}"!`);
+    setTimeout(() => setShareToast(null), 3000);
+    setAddToPlaylistSong(null);
+  };
+
+  // --------------------------------------------------------------------------
+  // Remove Song from Playlist Handler
+  // --------------------------------------------------------------------------
+  const handleRemoveSongFromPlaylist = async (playlistId, songId, songTitle = 'Track') => {
+    const userKey = currentUser?.id || currentUser?.email || 'guest';
+    const storageKey = currentUser ? `voxa_playlists_${userKey}` : 'voxa_playlists_guest';
+
+    setPlaylists(prev => prev.map(p => {
+      if (p.id === playlistId) {
+        const filtered = (p.songs || []).filter(s => s.id !== songId);
+        return { ...p, songs: filtered, songCount: filtered.length };
+      }
+      return p;
+    }));
+
+    if (selectedPlaylist && selectedPlaylist.id === playlistId) {
+      setSelectedPlaylist(prev => {
+        const filtered = (prev.songs || []).filter(s => s.id !== songId);
+        return { ...prev, songs: filtered, songCount: filtered.length };
+      });
+    }
+
+    try {
+      const current = JSON.parse(localStorage.getItem(storageKey) || '[]');
+      const updatedList = current.map(p => {
+        if (p.id === playlistId) {
+          const filtered = (p.songs || []).filter(s => s.id !== songId);
+          return { ...p, songs: filtered, songCount: filtered.length };
+        }
+        return p;
+      });
+      localStorage.setItem(storageKey, JSON.stringify(updatedList));
+    } catch (_) {}
+
+    if (currentUser) {
+      try {
+        await api.removeSongFromPlaylist(playlistId, songId);
+      } catch (_) {}
+    }
+
+    setShareToast(`Removed "${songTitle}" from playlist`);
+    setTimeout(() => setShareToast(null), 3000);
+  };
+
+  // --------------------------------------------------------------------------
+  // Quick Create Playlist & Add Song
+  // --------------------------------------------------------------------------
+  const handleQuickCreateAndAdd = async (song) => {
+    if (!quickPlaylistTitle.trim() || !song) return;
+    const cleanTitle = quickPlaylistTitle.trim();
+    const userKey = currentUser?.id || currentUser?.email || 'guest';
+    const storageKey = currentUser ? `voxa_playlists_${userKey}` : 'voxa_playlists_guest';
+
+    const newPlaylist = {
+      id: Date.now(),
+      title: cleanTitle,
+      name: cleanTitle,
+      description: 'Created from song menu',
+      isPublic: true,
+      songs: [song],
+      songCount: 1,
+      createdAt: new Date().toISOString()
+    };
+
+    setPlaylists(prev => [newPlaylist, ...prev]);
+
+    try {
+      const current = JSON.parse(localStorage.getItem(storageKey) || '[]');
+      localStorage.setItem(storageKey, JSON.stringify([newPlaylist, ...current]));
+    } catch (_) {}
+
+    if (currentUser) {
+      try {
+        const created = await api.createPlaylist(cleanTitle, 'Created from song menu');
+        if (created?.id) {
+          await api.addSongToPlaylist(created.id, song.id);
+        }
+      } catch (_) {}
+    }
+
+    setShareToast(`Created "${cleanTitle}" & added "${song.title}"!`);
+    setTimeout(() => setShareToast(null), 3000);
+    setQuickPlaylistTitle('');
+    setAddToPlaylistSong(null);
   };
 
   // --------------------------------------------------------------------------
@@ -2142,10 +2363,23 @@ export default function App() {
                         <td style={{ fontFamily: 'var(--font-mono)', fontSize: '0.8rem' }}>
                           {formatTime(song.durationSec || 180)}
                         </td>
-                        <td onClick={(e) => { e.stopPropagation(); handleLikeToggle(song); }}>
-                          <button className={`btn-icon-subtle ${isLiked ? 'liked' : ''}`}>
-                            <Heart size={16} fill={isLiked ? '#f43f5e' : 'none'} />
-                          </button>
+                        <td onClick={(e) => e.stopPropagation()}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                            <button
+                              className="btn-icon-subtle"
+                              title="Add to Playlist"
+                              onClick={(e) => { e.stopPropagation(); setAddToPlaylistSong(song); }}
+                            >
+                              <ListPlus size={16} />
+                            </button>
+                            <button
+                              className={`btn-icon-subtle ${isLiked ? 'liked' : ''}`}
+                              title={isLiked ? 'Unlike' : 'Like'}
+                              onClick={(e) => { e.stopPropagation(); handleLikeToggle(song); }}
+                            >
+                              <Heart size={16} fill={isLiked ? '#f43f5e' : 'none'} color={isLiked ? '#f43f5e' : 'currentColor'} />
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     );
@@ -2304,6 +2538,13 @@ export default function App() {
                                       </div>
                                       <div className="top-song-right">
                                         <button
+                                          className="btn-icon-subtle"
+                                          title="Add to Playlist"
+                                          onClick={(e) => { e.stopPropagation(); setAddToPlaylistSong(song); }}
+                                        >
+                                          <ListPlus size={16} />
+                                        </button>
+                                        <button
                                           className={`btn-icon-subtle ${isLiked ? 'liked' : ''}`}
                                           onClick={(e) => { e.stopPropagation(); handleLikeToggle(song); }}
                                         >
@@ -2371,10 +2612,23 @@ export default function App() {
                                   <td style={{ fontFamily: 'var(--font-mono)', fontSize: '0.8rem' }}>
                                     {formatTime(song.durationSec || 210)}
                                   </td>
-                                  <td onClick={(e) => { e.stopPropagation(); handleLikeToggle(song); }}>
-                                    <button className={`btn-icon-subtle ${isLiked ? 'liked' : ''}`}>
-                                      <Heart size={16} fill={isLiked ? '#fa243c' : 'none'} color={isLiked ? '#fa243c' : 'currentColor'} />
-                                    </button>
+                                  <td onClick={(e) => e.stopPropagation()}>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                      <button
+                                        className="btn-icon-subtle"
+                                        title="Add to Playlist"
+                                        onClick={(e) => { e.stopPropagation(); setAddToPlaylistSong(song); }}
+                                      >
+                                        <ListPlus size={16} />
+                                      </button>
+                                      <button
+                                        className={`btn-icon-subtle ${isLiked ? 'liked' : ''}`}
+                                        title={isLiked ? 'Unlike' : 'Like'}
+                                        onClick={(e) => { e.stopPropagation(); handleLikeToggle(song); }}
+                                      >
+                                        <Heart size={16} fill={isLiked ? '#fa243c' : 'none'} color={isLiked ? '#fa243c' : 'currentColor'} />
+                                      </button>
+                                    </div>
                                   </td>
                                 </tr>
                               );
@@ -2539,10 +2793,23 @@ export default function App() {
                       </td>
                       <td>{song.albumName || 'Single'}</td>
                       <td>{formatTime(song.durationSec || 180)}</td>
-                      <td onClick={(e) => { e.stopPropagation(); handleLikeToggle(song); }}>
-                        <button className="btn-icon-subtle liked">
-                          <Heart size={16} fill="#f43f5e" />
-                        </button>
+                      <td onClick={(e) => e.stopPropagation()}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                          <button
+                            className="btn-icon-subtle"
+                            title="Add to Playlist"
+                            onClick={(e) => { e.stopPropagation(); setAddToPlaylistSong(song); }}
+                          >
+                            <ListPlus size={16} />
+                          </button>
+                          <button
+                            className="btn-icon-subtle liked"
+                            title="Unlike"
+                            onClick={(e) => { e.stopPropagation(); handleLikeToggle(song); }}
+                          >
+                            <Heart size={16} fill="#f43f5e" />
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   ))}
@@ -2563,34 +2830,235 @@ export default function App() {
               ================================================================ */}
           {activeTab === 'library' && (
             <div>
-              <div className="section-header">
-                <h1 style={{ fontSize: '2rem', fontWeight: 800 }}>Your Playlists</h1>
-                <button
-                  className="btn-primary"
-                  onClick={() => setShowPlaylistModal(true)}
-                  style={{ display: 'flex', alignItems: 'center', gap: '8px' }}
-                >
-                  <Plus size={16} />
-                  <span>Create Playlist</span>
-                </button>
-              </div>
-
-              <div className="cards-grid">
-                {playlists.map(pl => (
-                  <div key={pl.id} className="music-card">
-                    <div className="card-img-wrapper" style={{
-                      background: 'linear-gradient(135deg, #1e1b4b 0%, #312e81 100%)',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center'
-                    }}>
-                      <Music size={44} color="#a78bfa" />
+              {selectedPlaylist ? (
+                /* Detail View for Selected Playlist (Clean & Compact without oversized picture) */
+                <div className="playlist-detail-view">
+                  <div className="playlist-clean-header">
+                    <div className="playlist-header-left">
+                      <button
+                        className="btn-back-link"
+                        onClick={() => setSelectedPlaylist(null)}
+                      >
+                        ← Back to All Playlists
+                      </button>
+                      <div className="playlist-header-title-row">
+                        <div className="playlist-icon-badge">
+                          <Library size={24} color="#f43f5e" />
+                        </div>
+                        <div>
+                          <h1 className="playlist-clean-title">{selectedPlaylist.title || selectedPlaylist.name}</h1>
+                          <div className="playlist-clean-meta">
+                            <span>{currentUser?.name || 'You'}</span>
+                            <span>•</span>
+                            <span>{selectedPlaylist.songs?.length || 0} tracks</span>
+                            <span>•</span>
+                            <span className="playlist-privacy-pill">{selectedPlaylist.isPublic ? 'Public' : 'Private Vault'}</span>
+                          </div>
+                        </div>
+                      </div>
                     </div>
-                    <div className="card-title">{pl.title}</div>
-                    <div className="card-subtitle">{pl.songs?.length || 0} songs • {pl.isPublic ? 'Public' : 'Private'}</div>
+
+                    <div className="playlist-header-actions">
+                      {selectedPlaylist.songs && selectedPlaylist.songs.length > 0 && (
+                        <button
+                          className="btn-primary"
+                          onClick={() => playSong(selectedPlaylist.songs[0], selectedPlaylist.songs, { isExplicitPlaylist: true })}
+                          style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 24px' }}
+                        >
+                          <Play size={17} fill="white" />
+                          <span>Play All</span>
+                        </button>
+                      )}
+                      <button
+                        className="btn-danger-outline"
+                        onClick={() => handleDeletePlaylist(selectedPlaylist.id, selectedPlaylist.title || selectedPlaylist.name)}
+                        title="Delete this playlist"
+                      >
+                        <Trash2 size={16} />
+                        <span>Delete Playlist</span>
+                      </button>
+                    </div>
                   </div>
-                ))}
-              </div>
+
+                  {/* Playlist Songs Table - Identical to Trending Songs Table (Screenshot 2) */}
+                  <div className="section-header" style={{ marginTop: 24 }}>
+                    <div className="section-title">Tracks ({selectedPlaylist.songs?.length || 0})</div>
+                  </div>
+
+                  {selectedPlaylist.songs && selectedPlaylist.songs.length > 0 ? (
+                    <table className="track-table">
+                      <thead>
+                        <tr>
+                          <th style={{ width: 44 }}>#</th>
+                          <th>Title & Artist</th>
+                          <th>Album</th>
+                          <th>Genre</th>
+                          <th>Plays</th>
+                          <th style={{ width: 60 }}><Clock size={14} /></th>
+                          <th style={{ width: 64 }}></th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {selectedPlaylist.songs.map((song, idx) => {
+                          const isCur = currentSong?.id === song.id;
+                          const isLiked = likedSongIds.has(song.id);
+                          return (
+                            <tr
+                              key={song.id || idx}
+                              className={`track-row ${isCur ? 'active' : ''}`}
+                              onClick={() => playSong(song, selectedPlaylist.songs, { isExplicitPlaylist: true })}
+                              style={{ cursor: 'pointer' }}
+                              title="Click to play"
+                            >
+                              <td className="track-num-cell">
+                                {isCur && isPlaying ? (
+                                  <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'center', gap: 2, height: 16 }}>
+                                    <div className="eq-bar-1" style={{ width: 3, background: 'var(--accent-cyan)', borderRadius: 2 }}></div>
+                                    <div className="eq-bar-2" style={{ width: 3, background: 'var(--accent-purple)', borderRadius: 2 }}></div>
+                                    <div className="eq-bar-3" style={{ width: 3, background: 'var(--accent-cyan)', borderRadius: 2 }}></div>
+                                  </div>
+                                ) : (
+                                  idx + 1
+                                )}
+                              </td>
+                              <td>
+                                <div className="track-title-cell">
+                                  <img
+                                    src={song.imageUrl || FALLBACK_COVER}
+                                    alt={song.title}
+                                    className="track-thumb"
+                                    onError={handleImageError}
+                                  />
+                                  <div>
+                                    <div className="track-title">{song.title}</div>
+                                    <div className="track-artist">{song.artistName || 'Unknown Artist'}</div>
+                                  </div>
+                                </div>
+                              </td>
+                              <td>{song.albumName || 'Single'}</td>
+                              <td>
+                                <span className="track-genre-badge">{song.genre || 'Hindi'}</span>
+                              </td>
+                              <td style={{ fontFamily: 'var(--font-mono)', fontSize: '0.8rem' }}>
+                                {(song.playCount || 100000).toLocaleString()}
+                              </td>
+                              <td style={{ fontFamily: 'var(--font-mono)', fontSize: '0.8rem' }}>
+                                {formatTime(song.durationSec || 210)}
+                              </td>
+                              <td onClick={(e) => e.stopPropagation()}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                  <button
+                                    className={`btn-icon-subtle ${isLiked ? 'liked' : ''}`}
+                                    title={isLiked ? 'Unlike' : 'Like'}
+                                    onClick={(e) => { e.stopPropagation(); handleLikeToggle(song); }}
+                                  >
+                                    <Heart size={16} fill={isLiked ? '#f43f5e' : 'none'} color={isLiked ? '#f43f5e' : 'currentColor'} />
+                                  </button>
+                                  <button
+                                    className="btn-icon-subtle btn-remove-track"
+                                    title="Remove track from playlist"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleRemoveSongFromPlaylist(selectedPlaylist.id, song.id, song.title);
+                                    }}
+                                  >
+                                    <Trash2 size={16} color="#f43f5e" />
+                                  </button>
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  ) : (
+                    <div className="playlist-empty-state">
+                      <Music size={48} color="rgba(255,255,255,0.2)" />
+                      <h3>No songs in this playlist yet</h3>
+                      <p>Search for songs or browse trending hits, then click the "+" button to add them here!</p>
+                      <button className="btn-primary" onClick={() => setActiveTab('search')}>
+                        Search Songs
+                      </button>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                /* All Playlists Grid */
+                <div>
+                  <div className="section-header">
+                    <div>
+                      <h1 style={{ fontSize: '2rem', fontWeight: 800 }}>Your Playlists</h1>
+                      <p style={{ color: 'var(--text-muted)', fontSize: '0.88rem', marginTop: 4 }}>
+                        {playlists.length} custom playlists in your music vault
+                      </p>
+                    </div>
+                    <button
+                      className="btn-primary"
+                      onClick={() => setShowPlaylistModal(true)}
+                      style={{ display: 'flex', alignItems: 'center', gap: '8px' }}
+                    >
+                      <Plus size={16} />
+                      <span>Create Playlist</span>
+                    </button>
+                  </div>
+
+                  <div className="cards-grid">
+                    {playlists.map(pl => (
+                      <div
+                        key={pl.id}
+                        className="music-card playlist-card-interactive"
+                        onClick={() => setSelectedPlaylist(pl)}
+                        title="Click to open playlist"
+                      >
+                        <div className="card-img-wrapper" style={{
+                          background: 'linear-gradient(135deg, #1e1b4b 0%, #312e81 100%)',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          position: 'relative'
+                        }}>
+                          {pl.songs && pl.songs[0]?.imageUrl ? (
+                            <img
+                              src={pl.songs[0].imageUrl}
+                              alt={pl.title}
+                              style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                              onError={handleImageError}
+                            />
+                          ) : (
+                            <Music size={44} color="#a78bfa" />
+                          )}
+
+                          {/* Instant Card Delete Button */}
+                          <button
+                            className="card-quick-delete-btn"
+                            title="Delete Playlist"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleDeletePlaylist(pl.id, pl.title || pl.name);
+                            }}
+                          >
+                            <Trash2 size={15} />
+                          </button>
+                        </div>
+                        <div className="card-title">{pl.title || pl.name}</div>
+                        <div className="card-subtitle">
+                          {pl.songs?.length || pl.songCount || 0} songs • {pl.isPublic ? 'Public' : 'Private'}
+                        </div>
+                      </div>
+                    ))}
+                    {playlists.length === 0 && (
+                      <div style={{ gridColumn: '1 / -1', textAlign: 'center', padding: '60px 20px', color: 'var(--text-muted)' }}>
+                        <FolderPlus size={48} color="rgba(255,255,255,0.2)" style={{ marginBottom: 16 }} />
+                        <h3 style={{ color: '#fff', marginBottom: 8 }}>No playlists created yet</h3>
+                        <p style={{ marginBottom: 20 }}>Create your first custom playlist to save your favorite songs!</p>
+                        <button className="btn-primary" onClick={() => setShowPlaylistModal(true)}>
+                          Create Playlist
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
@@ -3041,6 +3509,13 @@ export default function App() {
                 title={likedSongIds.has(currentSong.id) ? 'Unlike' : 'Like'}
               >
                 <Heart size={18} fill={likedSongIds.has(currentSong.id) ? '#f43f5e' : 'none'} />
+              </button>
+              <button
+                className="btn-icon-subtle"
+                onClick={() => setAddToPlaylistSong(currentSong)}
+                title="Add to Playlist"
+              >
+                <ListPlus size={18} />
               </button>
             </>
           ) : (
@@ -3669,6 +4144,115 @@ export default function App() {
       )}
 
       {/* ====================================================================
+          MODAL: ADD SONG TO PLAYLIST
+          ==================================================================== */}
+      {addToPlaylistSong && (
+        <div className="modal-backdrop" onClick={() => setAddToPlaylistSong(null)}>
+          <div className="modal-card add-to-playlist-card" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <div className="modal-title" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <ListPlus size={20} color="var(--accent-red)" />
+                <span>Add to Playlist</span>
+              </div>
+              <button className="modal-close-btn" onClick={() => setAddToPlaylistSong(null)}>✕</button>
+            </div>
+
+            {/* Song Preview Banner */}
+            <div className="add-song-preview-box">
+              <img
+                src={addToPlaylistSong.imageUrl || FALLBACK_COVER}
+                alt={addToPlaylistSong.title}
+                className="add-song-thumb"
+                onError={handleImageError}
+              />
+              <div className="add-song-info">
+                <div className="add-song-title">{addToPlaylistSong.title}</div>
+                <div className="add-song-artist">{addToPlaylistSong.artistName || 'Unknown Artist'}</div>
+              </div>
+            </div>
+
+            {/* Existing Playlists Picker List */}
+            <div className="playlist-picker-header">
+              <span>Select a Playlist ({playlists.length})</span>
+            </div>
+
+            <div className="playlist-picker-list">
+              {playlists.map(pl => {
+                const isAlreadyIn = (pl.songs || []).some(
+                  s => s.id === addToPlaylistSong.id || (s.title && addToPlaylistSong.title && s.title.toLowerCase() === addToPlaylistSong.title.toLowerCase())
+                );
+                return (
+                  <div key={pl.id} className="playlist-picker-item">
+                    <div className="playlist-picker-item-left">
+                      <div className="playlist-mini-icon">
+                        <Music size={16} color="#a78bfa" />
+                      </div>
+                      <div className="playlist-picker-meta">
+                        <div className="playlist-picker-name">{pl.title || pl.name}</div>
+                        <div className="playlist-picker-sub">
+                          {pl.songs?.length || pl.songCount || 0} songs • {pl.isPublic ? 'Public' : 'Private'}
+                        </div>
+                      </div>
+                    </div>
+                    {isAlreadyIn ? (
+                      <span className="playlist-added-badge">
+                        <CheckCircle size={14} /> Added
+                      </span>
+                    ) : (
+                      <button
+                        className="btn-primary-sm"
+                        onClick={() => handleAddSongToPlaylist(pl.id, addToPlaylistSong)}
+                      >
+                        + Add
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
+
+              {playlists.length === 0 && (
+                <div style={{ textAlign: 'center', padding: '24px 10px', color: 'var(--text-muted)', fontSize: '0.9rem' }}>
+                  No playlists created yet. Create one below!
+                </div>
+              )}
+            </div>
+
+            {/* Quick New Playlist Inline Form */}
+            <div className="playlist-quick-create-section">
+              <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '8px', fontWeight: 600 }}>
+                OR CREATE NEW PLAYLIST:
+              </div>
+              <div className="playlist-quick-input-row">
+                <input
+                  type="text"
+                  placeholder="New playlist name..."
+                  value={quickPlaylistTitle}
+                  onChange={(e) => setQuickPlaylistTitle(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      handleQuickCreateAndAdd(addToPlaylistSong);
+                    }
+                  }}
+                  className="quick-playlist-input"
+                />
+                <button
+                  type="button"
+                  className="btn-primary"
+                  onClick={() => handleQuickCreateAndAdd(addToPlaylistSong)}
+                  disabled={!quickPlaylistTitle.trim()}
+                  style={{ display: 'flex', alignItems: 'center', gap: '6px', whiteSpace: 'nowrap', padding: '9px 16px', fontSize: '0.85rem' }}
+                >
+                  <FolderPlus size={16} />
+                  <span>Create & Add</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ====================================================================
           MOBILE BOTTOM NAVIGATION (Spotify Mobile Layout)
           ==================================================================== */}
       <nav className="mobile-bottom-nav">
@@ -3773,13 +4357,23 @@ export default function App() {
               )}
             </div>
             {currentSong && (
-              <button
-                className={`btn-icon-subtle ${likedSongIds.has(currentSong.id) ? 'liked' : ''}`}
-                onClick={() => handleLikeToggle(currentSong)}
-                style={{ transform: 'scale(1.2)' }}
-              >
-                <Heart size={24} fill={likedSongIds.has(currentSong.id) ? '#f43f5e' : 'none'} color={likedSongIds.has(currentSong.id) ? '#f43f5e' : '#fff'} />
-              </button>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <button
+                  className="btn-icon-subtle"
+                  onClick={() => setAddToPlaylistSong(currentSong)}
+                  title="Add to Playlist"
+                  style={{ transform: 'scale(1.15)' }}
+                >
+                  <ListPlus size={22} />
+                </button>
+                <button
+                  className={`btn-icon-subtle ${likedSongIds.has(currentSong.id) ? 'liked' : ''}`}
+                  onClick={() => handleLikeToggle(currentSong)}
+                  style={{ transform: 'scale(1.2)' }}
+                >
+                  <Heart size={24} fill={likedSongIds.has(currentSong.id) ? '#f43f5e' : 'none'} color={likedSongIds.has(currentSong.id) ? '#f43f5e' : '#fff'} />
+                </button>
+              </div>
             )}
           </div>
 
