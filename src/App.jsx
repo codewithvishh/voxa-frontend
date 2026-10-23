@@ -13,7 +13,7 @@ import {
   buildDynamicEraRadio,
   getRootTitleWords
 } from './services/recommendationAlgorithm';
-import { getSynchronizedLyrics } from './services/lyricsService';
+import { getSynchronizedLyrics, fetchOnlineLyrics } from './services/lyricsService';
 import './App.css';
 
 // Fallback artworks if remote image fails
@@ -203,16 +203,35 @@ export default function App() {
   const [shareToast, setShareToast] = useState(null);
   const lyricsContainerRef = useRef(null);
   const activeLyricRef = useRef(null);
+  const contentScrollRef = useRef(null);
 
-  // Synchronized Lyrics Loader
+  // Auto-scroll main viewport to top when switching views/tabs
   useEffect(() => {
+    if (contentScrollRef.current) {
+      contentScrollRef.current.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+  }, [activeTab]);
+
+  // Synchronized Lyrics Loader (Fast Cached + Live Online Sync)
+  useEffect(() => {
+    let isCancelled = false;
     if (currentSong) {
-      const lyrics = getSynchronizedLyrics(currentSong);
-      setCurrentLyrics(lyrics);
+      // 1. Immediately display instant built-in / cached lyrics
+      const instant = getSynchronizedLyrics(currentSong);
+      if (instant && instant.length > 0) {
+        setCurrentLyrics(instant);
+      }
+      // 2. Fetch live real LRC lyrics asynchronously for full accuracy on any track
+      fetchOnlineLyrics(currentSong).then(onlineLyrics => {
+        if (!isCancelled && onlineLyrics && onlineLyrics.length > 0) {
+          setCurrentLyrics(onlineLyrics);
+        }
+      });
     } else {
       setCurrentLyrics([]);
     }
-  }, [currentSong]);
+    return () => { isCancelled = true; };
+  }, [currentSong?.id, currentSong?.title]);
 
   // Compute Active Lyric Line Index based on playback currentTime
   const activeLyricIndex = useMemo(() => {
@@ -1438,7 +1457,28 @@ export default function App() {
     return matched.length > 0 ? matched : trendingList;
   }, [selectedGenre, trendingList, genreCache]);
 
-  const heroSong = trendingList[0] || null;
+  // Dynamic Rotating Hero Song: Changes every time user navigates to Home / Discover!
+  const [heroSongIndex, setHeroSongIndex] = useState(0);
+
+  useEffect(() => {
+    if (trendingList && trendingList.length > 0) {
+      // Pick a random exciting superhit from top trending list
+      const randomIdx = Math.floor(Math.random() * Math.min(trendingList.length, 15));
+      setHeroSongIndex(randomIdx);
+    }
+  }, [activeTab, trendingList.length]);
+
+  const heroSong = (trendingList && trendingList.length > 0) ? (trendingList[heroSongIndex] || trendingList[0]) : null;
+
+  const handleShuffleHero = () => {
+    if (trendingList && trendingList.length > 1) {
+      let nextIdx;
+      do {
+        nextIdx = Math.floor(Math.random() * Math.min(trendingList.length, 15));
+      } while (nextIdx === heroSongIndex && trendingList.length > 1);
+      setHeroSongIndex(nextIdx);
+    }
+  };
 
   return (
     <div className="app-container">
@@ -1963,7 +2003,7 @@ export default function App() {
         </header>
 
         {/* Scrollable Content View */}
-        <div className="content-scrollable">
+        <div className="content-scrollable" ref={contentScrollRef}>
           {/* ================================================================
               VIEW: DISCOVER / HOME
               ================================================================ */}
@@ -1972,14 +2012,24 @@ export default function App() {
               {/* Hero Banner */}
               <div className="hero-banner">
                 <div style={{ zIndex: 2 }}>
-                  <div className="hero-badge">
-                    <Flame size={14} /> FEATURED TRACK
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
+                    <div className="hero-badge">
+                      <Flame size={14} /> FEATURED TRACK
+                    </div>
+                    <button
+                      className="hero-shuffle-btn"
+                      onClick={handleShuffleHero}
+                      title="Shuffle to another featured superhit"
+                    >
+                      <Shuffle size={12} />
+                      <span>Discover Next</span>
+                    </button>
                   </div>
                   <h1 className="hero-title">
                     {heroSong?.title || 'Cosmic Journey'}
                   </h1>
                   <p className="hero-desc">
-                    By {heroSong?.artistName || 'AuraStream Artist'} • High Fidelity Remote Streaming via Jamendo Music
+                    By {heroSong?.artistName || 'Voxa Artist'} • 320 kbps Studio Master Stream
                   </p>
                   <div className="hero-actions">
                     <button

@@ -1380,8 +1380,34 @@
   letter-spacing: 0.12em;
   padding: 5px 12px;
   border-radius: var(--radius-full);
-  margin-bottom: 14px;
+  margin-bottom: 0;
   box-shadow: 0 0 14px rgba(255, 42, 81, 0.2);
+}
+
+.hero-shuffle-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  color: rgba(255, 255, 255, 0.85);
+  font-family: var(--font-mono);
+  font-size: 0.70rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  padding: 5px 12px;
+  border-radius: var(--radius-full);
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  backdrop-filter: blur(10px);
+}
+
+.hero-shuffle-btn:hover {
+  background: rgba(255, 42, 81, 0.22);
+  border-color: rgba(255, 42, 81, 0.5);
+  color: #ffffff;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 14px rgba(255, 42, 81, 0.3);
 }
 
 .hero-title {
