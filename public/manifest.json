@@ -1,0 +1,18 @@
+{
+  "name": "Voxa — Lossless Music Streaming",
+  "short_name": "Voxa",
+  "description": "High-fidelity lossless music streaming with intelligent era stations and real-time synchronized lyrics.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#07080d",
+  "theme_color": "#ff2a51",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'><rect width='512' height='512' rx='128' fill='%230e111b'/><path d='M192 384V140l220-40v244' stroke='%23ff2a51' stroke-width='36' stroke-linecap='round' stroke-linejoin='round'/><circle cx='140' cy='384' r='52' fill='%23ff2a51'/><circle cx='360' cy='344' r='52' fill='%2300f0ff'/></svg>",
+      "sizes": "192x192 512x512",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
