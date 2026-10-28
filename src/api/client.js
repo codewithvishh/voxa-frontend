@@ -247,33 +247,13 @@ export const api = {
       .then(res => ({ type: 'backend', data: res }))
       .catch(err => ({ type: 'backend', err }));
 
-    const cloudUrl = `https://www.jiosaavn.com/api.php?__call=search.getResults&_format=json&_marker=0&api_version=4&ctx=web6dot0&n=25&p=1&q=${encodeURIComponent(searchTarget)}`;
-    const cloudPromise = fetch(cloudUrl, { signal: AbortSignal.timeout(2200) })
+    const cloudUrl = `https://www.jiosaavn.com/api.php?__call=search.getResults&_format=json&_marker=0&api_version=4&ctx=web6dot0&n=35&p=1&q=${encodeURIComponent(searchTarget)}`;
+    const cloudPromise = fetch(cloudUrl, { signal: AbortSignal.timeout(2800) })
       .then(r => r.json())
       .then(data => ({ type: 'cloud', data }))
       .catch(err => ({ type: 'cloud', err }));
 
-    // Fast-path race: If backend has cached or local tracks, it resolves in ~50ms!
-    let settled = [];
-    try {
-      const fastBackend = await Promise.race([
-        backendPromise.then(res => {
-          if (res.data?.content && res.data.content.length >= 4) {
-            return [res];
-          }
-          return null;
-        }),
-        new Promise(resolve => setTimeout(() => resolve(null), 350))
-      ]);
-
-      if (fastBackend && fastBackend.length > 0) {
-        settled = fastBackend.map(val => ({ status: 'fulfilled', value: val }));
-      } else {
-        settled = await Promise.allSettled([backendPromise, cloudPromise]);
-      }
-    } catch {
-      settled = await Promise.allSettled([backendPromise, cloudPromise]);
-    }
+    const settled = await Promise.allSettled([backendPromise, cloudPromise]);
 
     // Process all results from backend and cloud
     for (const outcome of settled) {
@@ -283,8 +263,10 @@ export const api = {
 
       if (val.type === 'backend' && val.data?.content && Array.isArray(val.data.content)) {
         for (const item of val.data.content) {
-          const norm = normalizeTitle(item.title);
-          if (!norm) continue;
+          const normTitle = normalizeTitle(item.title);
+          if (!normTitle) continue;
+          const artistKey = (item.artistName || '').toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 10);
+          const norm = `${normTitle}_${artistKey}`;
           if (!bestByNorm.has(norm)) {
             bestByNorm.set(norm, {
               item: {
@@ -314,8 +296,10 @@ export const api = {
             .replace(/&amp;/g, '&')
             .replace(/&#039;/g, "'");
 
-          const norm = normalizeTitle(cleanTitle);
-          if (!norm) continue;
+          const normTitle = normalizeTitle(cleanTitle);
+          if (!normTitle) continue;
+          const artistKey = (item.subtitle || '').toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 10);
+          const norm = `${normTitle}_${artistKey}`;
 
           const score = getOriginalScore(item);
           const playCount = Number(item.play_count || 0);

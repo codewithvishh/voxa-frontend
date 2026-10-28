@@ -309,19 +309,17 @@ export default function App() {
     }
   }, []);
 
-  // Strict title deduplication helper to eliminate repetitive song copies (e.g. 10x Apna Bana Le)
+  // Title + Artist deduplication helper to eliminate exact duplicate tracks
   const deduplicateSongList = (songs = []) => {
     const seen = new Set();
     const result = [];
     for (const song of songs) {
       if (!song || !song.title) continue;
       const norm = normalizeSongTitle(song.title);
-      const root = getRootTitleWords(song.title);
-      const key = norm || song.title.toLowerCase().trim();
+      const artist = (song.artistName || '').toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 10);
+      const key = `${norm}_${artist}`;
       if (!key || seen.has(key)) continue;
-      if (root.length >= 6 && seen.has(root)) continue;
       seen.add(key);
-      if (root.length >= 6) seen.add(root);
       result.push(song);
     }
     return result;
