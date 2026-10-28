@@ -242,24 +242,38 @@ export const api = {
 
     const bestByNorm = new Map();
 
-    // 1. Kick off backend search and cloud searches in PARALLEL
-    const fetchPromises = [
-      // Backend catalog query
-      request(`/search?q=${encodeURIComponent(searchTarget)}`)
-        .then(res => ({ type: 'backend', data: res }))
-        .catch(err => ({ type: 'backend', err })),
-      
-      // Cloud catalog queries (executed concurrently!)
-      ...searchQueries.map(sq => {
-        const url = `https://www.jiosaavn.com/api.php?__call=search.getResults&_format=json&_marker=0&api_version=4&ctx=web6dot0&n=35&p=1&q=${encodeURIComponent(sq)}`;
-        return fetch(url, { signal: AbortSignal.timeout(3500) })
-          .then(r => r.json())
-          .then(data => ({ type: 'cloud', data }))
-          .catch(err => ({ type: 'cloud', err }));
-      })
-    ];
+    // 1. Kick off backend search and direct cloud search in PARALLEL
+    const backendPromise = request(`/search?q=${encodeURIComponent(searchTarget)}`)
+      .then(res => ({ type: 'backend', data: res }))
+      .catch(err => ({ type: 'backend', err }));
 
-    const settled = await Promise.allSettled(fetchPromises);
+    const cloudUrl = `https://www.jiosaavn.com/api.php?__call=search.getResults&_format=json&_marker=0&api_version=4&ctx=web6dot0&n=25&p=1&q=${encodeURIComponent(searchTarget)}`;
+    const cloudPromise = fetch(cloudUrl, { signal: AbortSignal.timeout(2200) })
+      .then(r => r.json())
+      .then(data => ({ type: 'cloud', data }))
+      .catch(err => ({ type: 'cloud', err }));
+
+    // Fast-path race: If backend has cached or local tracks, it resolves in ~50ms!
+    let settled = [];
+    try {
+      const fastBackend = await Promise.race([
+        backendPromise.then(res => {
+          if (res.data?.content && res.data.content.length >= 4) {
+            return [res];
+          }
+          return null;
+        }),
+        new Promise(resolve => setTimeout(() => resolve(null), 350))
+      ]);
+
+      if (fastBackend && fastBackend.length > 0) {
+        settled = fastBackend.map(val => ({ status: 'fulfilled', value: val }));
+      } else {
+        settled = await Promise.allSettled([backendPromise, cloudPromise]);
+      }
+    } catch {
+      settled = await Promise.allSettled([backendPromise, cloudPromise]);
+    }
 
     // Process all results from backend and cloud
     for (const outcome of settled) {
