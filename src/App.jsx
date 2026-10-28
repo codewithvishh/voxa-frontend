@@ -1182,10 +1182,10 @@ export default function App() {
 
     setIsAuthLoading(true);
     try {
-      await api.sendOtp(authForm.email.trim(), authForm.name.trim());
+      const res = await api.sendOtp(authForm.email.trim(), authForm.name.trim());
       setAuthMode('verify-otp');
       setResendCooldown(30);
-      setAuthSuccessMsg(`We've sent a 6-digit One Time Password (OTP) to ${authForm.email}`);
+      setAuthSuccessMsg(res?.message || `We've sent a 6-digit One Time Password (OTP) to ${authForm.email}`);
     } catch (err) {
       setAuthError(err.message || 'Failed to send verification email. Please check your email address.');
     } finally {
