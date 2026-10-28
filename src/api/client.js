@@ -1,4 +1,4 @@
-const BASE_URL = '/api';
+const BASE_URL = (import.meta.env.VITE_API_URL ? import.meta.env.VITE_API_URL.replace(/\/+$/, '') : '') + '/api';
 
 // High-speed in-memory LRU search and autocomplete caches
 const searchCache = new Map();
@@ -463,9 +463,9 @@ export const api = {
 
   // Admin
   getAdminStats: () => request('/admin/stats'),
-  getImportJobs: () => request('/admin/import-jobs'),
-  triggerJamendoImport: (tag = 'rock', limit = 10) => request('/admin/import/jamendo', {
+  getImportJobs: () => request('/admin/import'),
+  triggerJamendoImport: (tag = 'rock', limit = 10) => request('/admin/import', {
     method: 'POST',
-    body: JSON.stringify({ tag, limit })
+    body: JSON.stringify({ tag, max: limit, limit })
   })
 };

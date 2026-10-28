@@ -3217,28 +3217,36 @@ export default function App() {
                   </tr>
                 </thead>
                 <tbody>
-                  {importJobs.map(job => (
-                    <tr key={job.id} className="track-row">
-                      <td style={{ fontFamily: 'var(--font-mono)' }}>#{job.id}</td>
-                      <td><strong>{job.tag}</strong></td>
-                      <td>{job.importedCount || 0} songs</td>
-                      <td>
-                        <span style={{
-                          padding: '2px 8px',
-                          borderRadius: 'var(--radius-full)',
-                          fontSize: '0.75rem',
-                          fontWeight: 700,
-                          background: 'rgba(34, 197, 94, 0.2)',
-                          color: '#22c55e'
-                        }}>
-                          {job.status}
-                        </span>
-                      </td>
-                      <td style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>
-                        {job.createdAt ? new Date(job.createdAt).toLocaleString() : 'Today'}
+                  {importJobs.length === 0 ? (
+                    <tr>
+                      <td colSpan={5} style={{ textAlign: 'center', padding: '24px', color: 'var(--text-secondary)' }}>
+                        No import jobs recorded yet. Use the form above to trigger a Jamendo sync!
                       </td>
                     </tr>
-                  ))}
+                  ) : (
+                    importJobs.map(job => (
+                      <tr key={job.jobId || job.id} className="track-row">
+                        <td style={{ fontFamily: 'var(--font-mono)' }}>#{job.jobId || job.id}</td>
+                        <td><strong>{job.tag || (job.requested ? `${job.requested} tracks` : 'Jamendo Sync')}</strong></td>
+                        <td>{job.imported ?? job.importedCount ?? 0} songs</td>
+                        <td>
+                          <span style={{
+                            padding: '2px 8px',
+                            borderRadius: 'var(--radius-full)',
+                            fontSize: '0.75rem',
+                            fontWeight: 700,
+                            background: job.status === 'COMPLETED' ? 'rgba(34, 197, 94, 0.2)' : 'rgba(234, 179, 8, 0.2)',
+                            color: job.status === 'COMPLETED' ? '#22c55e' : '#eab308'
+                          }}>
+                            {job.status}
+                          </span>
+                        </td>
+                        <td style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>
+                          {job.startedAt || job.createdAt ? new Date(job.startedAt || job.createdAt).toLocaleString() : 'Just now'}
+                        </td>
+                      </tr>
+                    ))
+                  )}
                 </tbody>
               </table>
             </div>
