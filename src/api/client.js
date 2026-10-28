@@ -1,4 +1,128 @@
-const BASE_URL = (import.meta.env.VITE_API_URL ? import.meta.env.VITE_API_URL.replace(/\/+$/, '') : '') + '/api';
+const RAW_API_URL = import.meta.env.VITE_API_URL || '';
+const BASE_URL = (RAW_API_URL ? RAW_API_URL.replace(/\/+$/, '') : '') + '/api';
+
+if (typeof window !== 'undefined' && !RAW_API_URL && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
+  console.warn(
+    '[Voxa Cloud Warning] VITE_API_URL environment variable is not configured. ' +
+    'To connect your Vercel frontend to your Render backend, set VITE_API_URL=https://<your-render-backend-url>.onrender.com in Vercel Project Settings -> Environment Variables, and redeploy.'
+  );
+}
+
+// Built-in verified seed tracks (guarantees the home feed never renders empty or gets stuck on loading)
+const INITIAL_FALLBACK_SONGS = [
+  {
+    id: 1001,
+    sourceId: 'jam_1001',
+    title: 'Midnight City Lights',
+    artistName: 'Neon Echoes',
+    albumName: 'Cybernetic Sunset',
+    genre: 'Synthwave',
+    durationSec: 215,
+    audioUrl: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3',
+    imageUrl: 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=500',
+    playCount: 142050,
+    active: true,
+    isLiked: false
+  },
+  {
+    id: 1002,
+    sourceId: 'jam_1002',
+    title: 'Retro Highway 84',
+    artistName: 'Neon Echoes',
+    albumName: 'Cybernetic Sunset',
+    genre: 'Synthwave',
+    durationSec: 188,
+    audioUrl: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-2.mp3',
+    imageUrl: 'https://images.unsplash.com/photo-1508700115892-45ecd05ae2ad?w=500',
+    playCount: 98120,
+    active: true,
+    isLiked: false
+  },
+  {
+    id: 1004,
+    sourceId: 'jam_1004',
+    title: 'Sunday Morning Brew',
+    artistName: 'Luna Mirage',
+    albumName: 'Coffee & Raindrops',
+    genre: 'Lo-Fi',
+    durationSec: 160,
+    audioUrl: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-4.mp3',
+    imageUrl: 'https://images.unsplash.com/photo-1501386761578-eac5c94b800a?w=500',
+    playCount: 215300,
+    active: true,
+    isLiked: false
+  },
+  {
+    id: 1005,
+    sourceId: 'jam_1005',
+    title: 'Tokyo Street Drizzle',
+    artistName: 'Luna Mirage',
+    albumName: 'Coffee & Raindrops',
+    genre: 'Lo-Fi',
+    durationSec: 175,
+    audioUrl: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-5.mp3',
+    imageUrl: 'https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=500',
+    playCount: 189400,
+    active: true,
+    isLiked: false
+  },
+  {
+    id: 1007,
+    sourceId: 'jam_1007',
+    title: 'Wildflowers & Gold',
+    artistName: 'The Velvet Bloom',
+    albumName: 'Golden Horizons',
+    genre: 'Pop',
+    durationSec: 205,
+    audioUrl: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-7.mp3',
+    imageUrl: 'https://images.unsplash.com/photo-1498038432885-c6f3f1b912ee?w=500',
+    playCount: 312800,
+    active: true,
+    isLiked: false
+  },
+  {
+    id: 1009,
+    sourceId: 'jam_1009',
+    title: 'Electric Euphoria',
+    artistName: 'Apex Pulse',
+    albumName: 'Overdrive Velocity',
+    genre: 'Pop',
+    durationSec: 220,
+    audioUrl: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-9.mp3',
+    imageUrl: 'https://images.unsplash.com/photo-1470229722913-7c0e2dbbafd3?w=500',
+    playCount: 178900,
+    active: true,
+    isLiked: false
+  },
+  {
+    id: 1011,
+    sourceId: 'jam_1011',
+    title: 'Mountain Pine Whispers',
+    artistName: 'Quiet Reverie',
+    albumName: 'Whispering Woods',
+    genre: 'Retro',
+    durationSec: 168,
+    audioUrl: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-11.mp3',
+    imageUrl: 'https://images.unsplash.com/photo-1447752875215-b2761acb3c5d?w=500',
+    playCount: 152300,
+    active: true,
+    isLiked: false
+  },
+  {
+    id: 1012,
+    sourceId: 'jam_1012',
+    title: 'Canyon Echoes',
+    artistName: 'Quiet Reverie',
+    albumName: 'Whispering Woods',
+    genre: 'Retro',
+    durationSec: 198,
+    audioUrl: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-12.mp3',
+    imageUrl: 'https://images.unsplash.com/photo-1441974231531-c6227db76b6e?w=500',
+    playCount: 89400,
+    active: true,
+    isLiked: false
+  }
+];
 
 // High-speed in-memory LRU search and autocomplete caches
 const searchCache = new Map();
@@ -53,6 +177,10 @@ async function request(endpoint, options = {}) {
     const contentType = response.headers.get('content-type');
     if (contentType && contentType.includes('application/json')) {
       return await response.json();
+    }
+    if (contentType && contentType.includes('text/html')) {
+      console.warn(`[Voxa API] Endpoint '${endpoint}' returned HTML instead of JSON. Ensure VITE_API_URL is set in Vercel to your deployed Render URL.`);
+      return null;
     }
     return null;
   } catch (err) {
@@ -120,50 +248,9 @@ export const api = {
       uniqueTrending.push(song);
     }
 
-    // If unique list is fewer than 35 items, fetch diverse top hits from live cloud catalog
-    if (uniqueTrending.length < 35) {
-      try {
-        const queries = ['top bollywood hits', 'trending hindi songs'];
-        for (const q of queries) {
-          if (uniqueTrending.length >= 45) break;
-          const res = await fetch(`https://www.jiosaavn.com/api.php?__call=search.getResults&_format=json&_marker=0&api_version=4&ctx=web6dot0&n=30&p=1&q=${encodeURIComponent(q)}`);
-          const data = await res.json();
-          if (data && data.results) {
-            for (const item of data.results) {
-              const rawTitle = item.title || 'Unknown Title';
-              const cleanTitle = rawTitle.replace(/&quot;/g, '"').replace(/&amp;/g, '&').replace(/&#039;/g, "'");
-              const norm = normalizeTitle(cleanTitle);
-              if (!norm || seenTitles.has(norm)) continue;
-              seenTitles.add(norm);
-
-              const cleanArtist = (item.subtitle || 'Bollywood Artist').replace(/&quot;/g, '"').replace(/&amp;/g, '&');
-              const vlink = item.more_info?.vlink || '';
-              const preview = item.more_info?.media_preview_url || '';
-              const rawImg = (item.image || '').replace(/^http:/, 'https:');
-              const imageUrl = rawImg.replace('150x150', '500x500').replace('50x50', '500x500')
-                || rawImg
-                || 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=500';
-
-              uniqueTrending.push({
-                id: Number(item.id) || Math.floor(Math.random() * 100000),
-                sourceId: 'saavn_' + item.id,
-                title: cleanTitle,
-                artistName: cleanArtist,
-                albumName: item.more_info?.album || 'Single',
-                genre: item.language || 'Hindi',
-                durationSec: Number(item.more_info?.duration || 210),
-                audioUrl: vlink || preview || 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3',
-                imageUrl: imageUrl,
-                playCount: Number(item.play_count || 500000),
-                active: true,
-                isLiked: false
-              });
-            }
-          }
-        }
-      } catch (e) {
-        console.warn('Catalog supplement notice:', e);
-      }
+    // Fallback: If unique list is empty (e.g. backend is waking up on Render free tier or offline), load built-in verified tracks
+    if (uniqueTrending.length === 0) {
+      uniqueTrending.push(...INITIAL_FALLBACK_SONGS);
     }
 
     return {
