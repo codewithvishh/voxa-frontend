@@ -450,10 +450,11 @@ export default function App() {
   };
 
   // --------------------------------------------------------------------------
-  // Audio Player Engine Handlers
+  // Audio Player Engine Handlers & Mobile Background Continuity
   // --------------------------------------------------------------------------
   useEffect(() => {
     const audio = audioRef.current;
+    if (!audio) return;
     audio.loop = false;
 
     const handleTimeUpdate = () => {
@@ -478,21 +479,90 @@ export default function App() {
       }
     };
 
+    const handlePlay = () => {
+      setIsPlaying(true);
+    };
+
+    const handlePause = () => {
+      // Sync state if paused externally by OS, bluetooth, or incoming call
+      if (audio.paused) {
+        setIsPlaying(false);
+      }
+    };
+
+    const handleStalled = () => {
+      console.warn('[Voxa Audio] Stream buffer stalled, attempting auto-resume...');
+      if (!audio.paused && audio.src) {
+        audio.play().catch(() => {});
+      }
+    };
+
+    const handleError = () => {
+      console.warn('[Voxa Audio] Audio playback error:', audio.error);
+      if (audio.error && currentSong && audio.src) {
+        const savedTime = audio.currentTime;
+        // Auto-reconnect after transient mobile network drop
+        setTimeout(() => {
+          if (audioRef.current && currentSong && !audioRef.current.ended) {
+            console.log('[Voxa Audio] Auto-recovering stream after network interruption...');
+            audioRef.current.load();
+            audioRef.current.currentTime = savedTime;
+            audioRef.current.play().then(() => setIsPlaying(true)).catch(() => {});
+          }
+        }, 1200);
+      }
+    };
+
     audio.addEventListener('timeupdate', handleTimeUpdate);
     audio.addEventListener('loadedmetadata', handleLoadedMetadata);
     audio.addEventListener('ended', handleEnded);
+    audio.addEventListener('play', handlePlay);
+    audio.addEventListener('pause', handlePause);
+    audio.addEventListener('stalled', handleStalled);
+    audio.addEventListener('error', handleError);
 
     return () => {
       audio.removeEventListener('timeupdate', handleTimeUpdate);
       audio.removeEventListener('loadedmetadata', handleLoadedMetadata);
       audio.removeEventListener('ended', handleEnded);
+      audio.removeEventListener('play', handlePlay);
+      audio.removeEventListener('pause', handlePause);
+      audio.removeEventListener('stalled', handleStalled);
+      audio.removeEventListener('error', handleError);
     };
   }, [currentSong, isRepeat, playbackQueue, queueIndex]);
 
-  // Volume & Mute Sync
+  // Volume & Mute Sync (Safe for iOS hardware volume)
   useEffect(() => {
-    audioRef.current.volume = isMuted ? 0 : volume;
+    try {
+      if (audioRef.current) {
+        audioRef.current.volume = isMuted ? 0 : volume;
+      }
+    } catch (e) {
+      // iOS Safari throws or ignores programmatic volume
+    }
   }, [volume, isMuted]);
+
+  // Mobile Background & Tab Visibility Sync (Prevents Disconnects on Mobile)
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      const audio = audioRef.current;
+      if (!audio) return;
+
+      if (document.visibilityState === 'visible') {
+        // Tab came back to foreground: sync state with audio engine
+        if (!audio.paused && !isPlaying) {
+          setIsPlaying(true);
+        } else if (audio.paused && isPlaying) {
+          setIsPlaying(false);
+        }
+        setCurrentTime(audio.currentTime);
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
+  }, [isPlaying]);
 
   const allVisibleSongs = (homeFeed.trending || []);
 
@@ -538,7 +608,7 @@ export default function App() {
 
   /**
    * Directly sets up audio playback without resetting the existing queue
-   * (Features Zero-Lag Preloaded Swap & Soft Volume Fade-In)
+   * (Features Zero-Lag Preloaded Swap & Mobile Background-Safe Audio Engine)
    */
   const playTrackDirect = (track) => {
     if (!track) return;
@@ -547,30 +617,51 @@ export default function App() {
       return;
     }
     const audio = audioRef.current;
+    if (!audio) return;
     hasTriggeredHistory.current = false;
     setCurrentSong(track);
 
     // Instant swap if already preloaded in memory
     audio.src = track.audioUrl;
+    audio.preload = 'auto';
 
     const targetVolume = isMuted ? 0 : volume;
-    audio.volume = 0; // Start at 0 for soft crossfade ramp
+    const isHidden = typeof document !== 'undefined' && document.hidden;
+
+    // Apply target volume directly.
+    // Avoid interval ramps when tab is hidden because mobile OS freezes timers leaving volume at 0.
+    try {
+      audio.volume = targetVolume;
+    } catch {
+      // iOS volume is hardware-controlled
+    }
 
     audio.play()
       .then(() => {
         setIsPlaying(true);
-        // Soft volume ramp (smooth 200ms audio fade-in like Spotify)
-        let step = 0;
-        const rampTimer = setInterval(() => {
-          step++;
-          audio.volume = Math.min(targetVolume, (step / 4) * targetVolume);
-          if (step >= 4) clearInterval(rampTimer);
-        }, 50);
+        // Only run soft volume ramp if tab is actively visible and volume is substantial
+        if (!isHidden && !isMuted && targetVolume > 0.1) {
+          try {
+            audio.volume = Math.max(0.1, targetVolume * 0.3);
+            let step = 1;
+            const rampTimer = setInterval(() => {
+              step++;
+              try {
+                audio.volume = Math.min(targetVolume, (step / 4) * targetVolume);
+              } catch {}
+              if (step >= 4) clearInterval(rampTimer);
+            }, 50);
+            setTimeout(() => {
+              clearInterval(rampTimer);
+              try { audio.volume = targetVolume; } catch {}
+            }, 300);
+          } catch {}
+        }
       })
       .catch(err => {
         console.warn('Playback notice, retrying with direct volume:', err);
         setTimeout(() => {
-          audio.volume = targetVolume;
+          try { audio.volume = targetVolume; } catch {}
           audio.play().then(() => setIsPlaying(true)).catch(() => setIsPlaying(false));
         }, 120);
       });
@@ -982,6 +1073,12 @@ export default function App() {
             const nextT = Math.min(duration || 300, audioRef.current.currentTime + skip);
             audioRef.current.currentTime = nextT;
             setCurrentTime(nextT);
+          }
+        });
+        navigator.mediaSession.setActionHandler('stop', () => {
+          if (audioRef.current) {
+            audioRef.current.pause();
+            setIsPlaying(false);
           }
         });
       } catch (err) {
@@ -4543,6 +4640,23 @@ export default function App() {
           </div>
         </div>
       )}
+
+      {/* Persistent Mobile Background Audio Engine */}
+      <audio
+        ref={audioRef}
+        preload="auto"
+        playsInline
+        webkit-playsinline="true"
+        x-webkit-airplay="allow"
+        style={{ display: 'none' }}
+      />
+      <audio
+        ref={preloadAudioRef}
+        preload="auto"
+        playsInline
+        webkit-playsinline="true"
+        style={{ display: 'none' }}
+      />
 
       {/* Share / Toast Notification */}
       {shareToast && (
