@@ -3356,7 +3356,10 @@ export default function App() {
                   Jamendo Legal API Track Importer
                 </h2>
                 <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '20px' }}>
-                  Sync high-fidelity tracks directly into your PostgreSQL database with full artist, album, and stream URLs.
+                  Sync royalty-free indie tracks directly into your PostgreSQL database.
+                  <span style={{ color: 'var(--accent-cyan)', display: 'block', marginTop: '4px' }}>
+                    💡 Tip: For commercial New Generation Bollywood & Pop superhits (Arijit Singh, Animal, Diljit, etc.), Voxa already streams millions of tracks live from the cloud catalog on-demand without needing manual imports!
+                  </span>
                 </p>
 
                 <form onSubmit={handleTriggerImport} style={{ display: 'flex', gap: '14px', alignItems: 'flex-end', flexWrap: 'wrap' }}>
@@ -3367,8 +3370,8 @@ export default function App() {
                       className="form-input"
                       value={importTag}
                       onChange={(e) => setImportTag(e.target.value)}
-                      placeholder="e.g. synthwave, rock, ambient, jazz"
-                      style={{ width: '220px' }}
+                      placeholder="e.g. pop, electronic, dance, lofi, rock"
+                      style={{ width: '240px' }}
                     />
                   </div>
 
@@ -3378,11 +3381,12 @@ export default function App() {
                       className="form-input"
                       value={importLimit}
                       onChange={(e) => setImportLimit(Number(e.target.value))}
-                      style={{ width: '120px' }}
+                      style={{ width: '140px' }}
                     >
                       <option value={5}>5 tracks</option>
                       <option value={10}>10 tracks</option>
                       <option value={20}>20 tracks</option>
+                      <option value={50}>50 tracks (API Max)</option>
                     </select>
                   </div>
 
