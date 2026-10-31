@@ -1225,6 +1225,103 @@
   gap: 12px;
 }
 
+/* Mobile Brand Header Bar (Hidden by default on Desktop) */
+.mobile-brand-bar {
+  display: none;
+}
+
+.top-logout-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(244, 63, 94, 0.12);
+  border: 1px solid rgba(244, 63, 94, 0.35);
+  color: #ff3b5c;
+  padding: 6px 14px;
+  border-radius: var(--radius-full);
+  font-size: 0.8rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.top-logout-btn:hover {
+  background: #f43f5e;
+  color: #ffffff;
+  border-color: #f43f5e;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 14px rgba(244, 63, 94, 0.4);
+}
+
+/* User Profile Badge in Library View */
+.library-user-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: linear-gradient(135deg, rgba(255, 42, 81, 0.1) 0%, rgba(18, 22, 34, 0.85) 100%);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: var(--radius-lg);
+  padding: 16px 20px;
+  margin-bottom: 24px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+  backdrop-filter: blur(20px);
+}
+
+.library-user-info {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.library-user-avatar {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #ff2a51 0%, #ff7a45 100%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 800;
+  font-size: 1.15rem;
+  color: #ffffff;
+  box-shadow: 0 4px 16px rgba(255, 42, 81, 0.45);
+  flex-shrink: 0;
+}
+
+.library-user-name {
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: #ffffff;
+  margin-bottom: 3px;
+}
+
+.library-user-meta {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.library-logout-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(244, 63, 94, 0.14);
+  border: 1px solid rgba(244, 63, 94, 0.4);
+  color: #f43f5e;
+  padding: 8px 18px;
+  border-radius: var(--radius-full);
+  font-size: 0.84rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.library-logout-btn:hover {
+  background: #f43f5e;
+  color: #ffffff;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 16px rgba(244, 63, 94, 0.5);
+}
+
 .demo-account-pill {
   padding: 7px 15px;
   border-radius: var(--radius-full);
@@ -3454,17 +3551,171 @@
   }
 
   .content-scrollable {
-    padding: 18px 16px 160px !important;
+    padding: 16px 14px 160px !important;
+    -webkit-overflow-scrolling: touch;
   }
 
   .top-header {
-    padding: 0 16px !important;
-    height: 64px !important;
+    padding: 12px 14px 12px !important;
+    height: auto !important;
+    min-height: 108px !important;
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: stretch !important;
+    gap: 10px !important;
+  }
+
+  /* Mobile Brand Bar with Crest and User Profile & Logout */
+  .mobile-brand-bar {
+    display: flex !important;
+    align-items: center !important;
+    justify-content: space-between !important;
+    width: 100% !important;
+  }
+
+  .mobile-brand-bar .studio-brand-crest {
+    padding: 0 !important;
+    gap: 10px !important;
+  }
+
+  .mobile-brand-bar .crest-glyph-box {
+    width: 32px !important;
+    height: 32px !important;
+    border-radius: 9px !important;
+  }
+
+  .mobile-brand-bar .crest-letter {
+    font-size: 1rem !important;
+  }
+
+  .mobile-brand-bar .brand-wordmark {
+    font-size: 1.15rem !important;
+  }
+
+  .mobile-brand-bar .brand-byline {
+    font-size: 0.68rem !important;
+  }
+
+  .mobile-header-user-station {
+    display: flex !important;
+    align-items: center !important;
+    gap: 8px !important;
+  }
+
+  .mobile-user-row {
+    display: flex !important;
+    align-items: center !important;
+    gap: 8px !important;
+  }
+
+  .mobile-user-pill {
+    display: flex !important;
+    align-items: center !important;
+    gap: 6px !important;
+    background: rgba(255, 255, 255, 0.07) !important;
+    padding: 4px 10px 4px 5px !important;
+    border-radius: 20px !important;
+    border: 1px solid rgba(255, 255, 255, 0.12) !important;
+  }
+
+  .mobile-user-avatar {
+    width: 24px !important;
+    height: 24px !important;
+    border-radius: 50% !important;
+    background: linear-gradient(135deg, #ff2a51 0%, #ff7a45 100%) !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    font-size: 0.72rem !important;
+    font-weight: 800 !important;
+    color: #ffffff !important;
+    flex-shrink: 0 !important;
+  }
+
+  .mobile-user-name {
+    font-size: 0.78rem !important;
+    font-weight: 600 !important;
+    color: #ffffff !important;
+    max-width: 90px !important;
+    white-space: nowrap !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+  }
+
+  .mobile-header-logout-btn {
+    display: inline-flex !important;
+    align-items: center !important;
+    gap: 4px !important;
+    background: rgba(244, 63, 94, 0.15) !important;
+    border: 1px solid rgba(244, 63, 94, 0.45) !important;
+    color: #ff3b5c !important;
+    padding: 5px 11px !important;
+    border-radius: 14px !important;
+    font-size: 0.75rem !important;
+    font-weight: 700 !important;
+    cursor: pointer !important;
+    transition: all 0.2s ease !important;
+  }
+
+  .mobile-header-logout-btn:active {
+    background: #f43f5e !important;
+    color: #ffffff !important;
+    transform: scale(0.96) !important;
+  }
+
+  .mobile-guest-row {
+    display: flex !important;
+    align-items: center !important;
+    gap: 6px !important;
+  }
+
+  .mobile-demo-pill {
+    padding: 5px 10px !important;
+    font-size: 0.72rem !important;
+  }
+
+  .mobile-demo-pill span {
+    display: inline !important;
+  }
+
+  .mobile-login-btn {
+    padding: 6px 14px !important;
+    font-size: 0.76rem !important;
+  }
+
+  .desktop-header-actions {
+    display: none !important;
   }
 
   .search-wrapper-relative {
     width: 100% !important;
-    max-width: 280px !important;
+    max-width: 100% !important;
+  }
+
+  .search-input {
+    padding: 9px 40px 9px 42px !important;
+    font-size: 0.85rem !important;
+  }
+
+  .search-icon {
+    left: 14px !important;
+    width: 16px !important;
+    height: 16px !important;
+  }
+
+  /* Autocomplete Dropdown fits nicely within screen */
+  .search-autocomplete-dropdown,
+  .autocomplete-dropdown {
+    position: absolute !important;
+    top: calc(100% + 8px) !important;
+    left: 0 !important;
+    right: 0 !important;
+    width: 100% !important;
+    min-width: unset !important;
+    max-width: 100% !important;
+    max-height: 60vh !important;
+    z-index: 10001 !important;
+    box-sizing: border-box !important;
   }
 
   .header-actions {
@@ -3475,8 +3726,14 @@
     display: none !important;
   }
 
+  /* Hide empty mini-player pill so it doesn't overlap Trending Songs */
+  .bottom-player.no-track {
+    display: none !important;
+  }
+
   /* Compact Bottom Mini-Player Pill on Mobile */
-  .bottom-player {
+  .bottom-player,
+  .bottom-player.has-track {
     position: fixed !important;
     bottom: 68px !important;
     left: 10px !important;

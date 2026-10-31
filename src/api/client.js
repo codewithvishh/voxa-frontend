@@ -329,54 +329,30 @@ export const api = {
 
     const bestByNorm = new Map();
 
-    // 1. Kick off backend search and direct cloud search in PARALLEL
-    const backendPromise = request(`/search?q=${encodeURIComponent(searchTarget)}`)
-      .then(res => ({ type: 'backend', data: res }))
-      .catch(err => ({ type: 'backend', err }));
+    // 1. FAST-PATH: Query backend first (backend already searches local DB + cloud proxy with 320kbps links)
+    try {
+      const backendRes = await request(`/search?q=${encodeURIComponent(searchTarget)}`);
+      if (backendRes && Array.isArray(backendRes.content) && backendRes.content.length > 0) {
+        const finalResult = {
+          content: backendRes.content,
+          totalElements: backendRes.totalElements || backendRes.content.length
+        };
+        if (searchCache.size > 120) searchCache.clear();
+        searchCache.set(cacheKey, finalResult);
+        return finalResult;
+      }
+    } catch (backendErr) {
+      console.warn('Backend search note, falling back to direct cloud search:', backendErr);
+    }
 
-    const cloudUrl = `https://www.jiosaavn.com/api.php?__call=search.getResults&_format=json&_marker=0&api_version=4&ctx=web6dot0&n=35&p=1&q=${encodeURIComponent(searchTarget)}`;
-    const cloudPromise = fetch(cloudUrl, { signal: AbortSignal.timeout(2800) })
-      .then(r => r.json())
-      .then(data => ({ type: 'cloud', data }))
-      .catch(err => ({ type: 'cloud', err }));
+    // 2. FALLBACK: Direct Cloud Search only if backend returned 0 items or threw an error
+    try {
+      const cloudUrl = `https://www.jiosaavn.com/api.php?__call=search.getResults&_format=json&_marker=0&api_version=4&ctx=web6dot0&n=35&p=1&q=${encodeURIComponent(searchTarget)}`;
+      const cloudRes = await fetch(cloudUrl, { signal: AbortSignal.timeout(1800) });
+      const cloudData = await cloudRes.json();
 
-    const settled = await Promise.allSettled([backendPromise, cloudPromise]);
-
-    // Process all results from backend and cloud
-    for (const outcome of settled) {
-      if (outcome.status !== 'fulfilled') continue;
-      const val = outcome.value;
-      if (!val) continue;
-
-      if (val.type === 'backend' && val.data?.content && Array.isArray(val.data.content)) {
-        for (const item of val.data.content) {
-          const normTitle = normalizeTitle(item.title);
-          if (!normTitle) continue;
-          const artistKey = (item.artistName || '').toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 10);
-          const norm = `${normTitle}_${artistKey}`;
-          if (!bestByNorm.has(norm)) {
-            bestByNorm.set(norm, {
-              item: {
-                id: item.id,
-                title: item.title,
-                subtitle: item.artistName,
-                image: item.imageUrl,
-                more_info: {
-                  album: item.albumName,
-                  duration: item.durationSec,
-                  vlink: item.audioUrl
-                },
-                language: item.genre,
-                play_count: item.playCount
-              },
-              cleanTitle: item.title,
-              score: 80,
-              playCount: Number(item.playCount || 100000)
-            });
-          }
-        }
-      } else if (val.type === 'cloud' && val.data?.results && Array.isArray(val.data.results)) {
-        for (const item of val.data.results) {
+      if (cloudData?.results && Array.isArray(cloudData.results)) {
+        for (const item of cloudData.results) {
           const rawTitle = item.title || 'Unknown Title';
           const cleanTitle = rawTitle
             .replace(/&quot;/g, '"')
@@ -401,6 +377,8 @@ export const api = {
           }
         }
       }
+    } catch (cloudErr) {
+      console.warn('Cloud search fallback notice:', cloudErr);
     }
 
     const combined = [];

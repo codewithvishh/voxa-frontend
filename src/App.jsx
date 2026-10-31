@@ -67,6 +67,7 @@ export default function App() {
   const [showSuggestions, setShowSuggestions] = useState(false);
   const searchContainerRef = useRef(null);
   const debounceRef = useRef(null);
+  const searchRequestIdRef = useRef(0);
 
   const POPULAR_SEARCHES = [
     'Arijit Singh', 'Atif Aslam', 'Shreya Ghoshal', 'Kesariya',
@@ -621,50 +622,43 @@ export default function App() {
     hasTriggeredHistory.current = false;
     setCurrentSong(track);
 
-    // Instant swap if already preloaded in memory
-    audio.src = track.audioUrl;
-    audio.preload = 'auto';
-
     const targetVolume = isMuted ? 0 : volume;
-    const isHidden = typeof document !== 'undefined' && document.hidden;
 
-    // Apply target volume directly.
-    // Avoid interval ramps when tab is hidden because mobile OS freezes timers leaving volume at 0.
+    // Apply target volume directly once without disruptive setInterval steps
     try {
       audio.volume = targetVolume;
     } catch {
       // iOS volume is hardware-controlled
     }
 
-    audio.play()
-      .then(() => {
-        setIsPlaying(true);
-        // Only run soft volume ramp if tab is actively visible and volume is substantial
-        if (!isHidden && !isMuted && targetVolume > 0.1) {
-          try {
-            audio.volume = Math.max(0.1, targetVolume * 0.3);
-            let step = 1;
-            const rampTimer = setInterval(() => {
-              step++;
-              try {
-                audio.volume = Math.min(targetVolume, (step / 4) * targetVolume);
-              } catch {}
-              if (step >= 4) clearInterval(rampTimer);
-            }, 50);
-            setTimeout(() => {
-              clearInterval(rampTimer);
+    // Instant source update and preload
+    if (audio.src !== track.audioUrl) {
+      try {
+        audio.pause();
+      } catch {}
+      audio.src = track.audioUrl;
+      audio.preload = 'auto';
+      audio.load();
+    }
+
+    const playPromise = audio.play();
+    if (playPromise !== undefined) {
+      playPromise
+        .then(() => {
+          setIsPlaying(true);
+        })
+        .catch(err => {
+          // If aborted by a new track click or fast skipping, ignore cleanly
+          if (err.name === 'AbortError') return;
+          console.warn('[Voxa Audio] Playback retry:', err);
+          setTimeout(() => {
+            if (audio.src === track.audioUrl && audio.paused) {
               try { audio.volume = targetVolume; } catch {}
-            }, 300);
-          } catch {}
-        }
-      })
-      .catch(err => {
-        console.warn('Playback notice, retrying with direct volume:', err);
-        setTimeout(() => {
-          try { audio.volume = targetVolume; } catch {}
-          audio.play().then(() => setIsPlaying(true)).catch(() => setIsPlaying(false));
-        }, 120);
-      });
+              audio.play().then(() => setIsPlaying(true)).catch(() => setIsPlaying(false));
+            }
+          }, 100);
+        });
+    }
 
     // Detect era & vibe for the new song
     const vibe = detectSongVibeAndEra(track);
@@ -1169,7 +1163,11 @@ export default function App() {
       }
     };
     document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
+    document.addEventListener('touchstart', handleClickOutside);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('touchstart', handleClickOutside);
+    };
   }, []);
 
   const handleSearchInputChange = (e) => {
@@ -1179,17 +1177,22 @@ export default function App() {
 
     if (debounceRef.current) clearTimeout(debounceRef.current);
 
+    const reqId = ++searchRequestIdRef.current;
+
     if (val.trim().length >= 2) {
       debounceRef.current = setTimeout(async () => {
         try {
           const res = await api.getSuggestions(val.trim());
-          if (res) {
+          // STRICT SEQUENCE CHECK: Only update if user hasn't typed further or searched
+          if (reqId === searchRequestIdRef.current && res) {
             setSuggestions(res);
           }
         } catch (err) {
-          console.warn('Autocomplete fetch error:', err);
+          if (reqId === searchRequestIdRef.current) {
+            console.warn('Autocomplete fetch error:', err);
+          }
         }
-      }, 180);
+      }, 140);
     } else {
       setSuggestions({ suggestions: [], songs: [], artists: [] });
     }
@@ -1198,23 +1201,43 @@ export default function App() {
   const executeSearch = async (term) => {
     const queryToSearch = (term || searchQuery).trim();
     if (!queryToSearch) return;
+
+    // Immediately cancel pending autocomplete debounce timer to avoid UI interference
+    if (debounceRef.current) {
+      clearTimeout(debounceRef.current);
+      debounceRef.current = null;
+    }
+
+    const currentReqId = ++searchRequestIdRef.current;
     setSearchQuery(queryToSearch);
     setShowSuggestions(false);
     setIsSearching(true);
     setActiveTab('search');
+
+    // Blur search input on mobile to cleanly dismiss virtual keyboard
+    if (typeof document !== 'undefined' && document.activeElement?.blur) {
+      document.activeElement.blur();
+    }
+
     try {
       const res = await api.search(queryToSearch);
-      if (res && Array.isArray(res.content)) {
-        setSearchResults({ ...res, content: deduplicateSongList(res.content) });
-      } else if (Array.isArray(res)) {
-        setSearchResults(deduplicateSongList(res));
-      } else {
-        setSearchResults(res);
+      if (currentReqId === searchRequestIdRef.current) {
+        if (res && Array.isArray(res.content)) {
+          setSearchResults({ ...res, content: deduplicateSongList(res.content) });
+        } else if (Array.isArray(res)) {
+          setSearchResults(deduplicateSongList(res));
+        } else {
+          setSearchResults(res);
+        }
       }
     } catch (err) {
-      console.error('Search failed:', err);
+      if (currentReqId === searchRequestIdRef.current) {
+        console.error('Search failed:', err);
+      }
     } finally {
-      setIsSearching(false);
+      if (currentReqId === searchRequestIdRef.current) {
+        setIsSearching(false);
+      }
     }
   };
 
@@ -1413,6 +1436,8 @@ export default function App() {
     localStorage.removeItem('aurastream_user');
     setCurrentUser(null);
     setActiveTab('discover');
+    setShareToast('Logged out of Voxa');
+    setTimeout(() => setShareToast(''), 2800);
   };
 
   // --------------------------------------------------------------------------
@@ -2146,6 +2171,65 @@ export default function App() {
       <main className="main-viewport">
         {/* Top Header */}
         <header className="top-header">
+          {/* Mobile Brand Crest & User Station (Top Bar on Mobile Screens) */}
+          <div className="mobile-brand-bar">
+            <div className="studio-brand-crest" onClick={() => setActiveTab('discover')} title="Voxa Home">
+              <div className="crest-glyph-box">
+                <span className="crest-letter">V</span>
+                <div className="crest-power-glow"></div>
+              </div>
+              <div className="crest-titles">
+                <div className="brand-wordmark">
+                  Voxa<span className="brand-dot-pulse">.</span>
+                </div>
+                <div className="brand-byline">
+                  by Vishal
+                </div>
+              </div>
+            </div>
+
+            <div className="mobile-header-user-station">
+              {currentUser ? (
+                <div className="mobile-user-row">
+                  <div className="mobile-user-pill" title={currentUser.name}>
+                    <div className="mobile-user-avatar">
+                      {currentUser.name ? currentUser.name.charAt(0).toUpperCase() : 'V'}
+                    </div>
+                    <span className="mobile-user-name">
+                      {currentUser.name?.split(' ')[0] || currentUser.name}
+                    </span>
+                  </div>
+                  <button
+                    className="mobile-header-logout-btn"
+                    onClick={handleLogout}
+                    title="Log Out of Voxa"
+                    aria-label="Log Out"
+                  >
+                    <LogOut size={15} />
+                    <span>Logout</span>
+                  </button>
+                </div>
+              ) : (
+                <div className="mobile-guest-row">
+                  <button
+                    className="demo-account-pill mobile-demo-pill"
+                    onClick={() => handleDemoLogin('user@musicapp.com', 'user123')}
+                    title="1-Click Demo User"
+                  >
+                    <UserIcon size={13} />
+                    <span>Demo</span>
+                  </button>
+                  <button
+                    className="btn-primary mobile-login-btn"
+                    onClick={() => { setAuthMode('login'); setShowAuthModal(true); }}
+                  >
+                    Log In
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+
           {/* Live Search Bar with Real-time Autocomplete Dropdown */}
           <div className="search-wrapper-relative" ref={searchContainerRef}>
             <form className="search-box-wrapper" onSubmit={handleSearchSubmit}>
@@ -2180,7 +2264,8 @@ export default function App() {
                         <div
                           key={item}
                           className="popular-chip"
-                          onMouseDown={() => executeSearch(item)}
+                          onClick={() => executeSearch(item)}
+                          onPointerDown={(e) => { e.preventDefault(); executeSearch(item); }}
                         >
                           🔍 {item}
                         </div>
@@ -2197,7 +2282,8 @@ export default function App() {
                           <div
                             key={i}
                             className="autocomplete-item"
-                            onMouseDown={() => executeSearch(term)}
+                            onClick={() => executeSearch(term)}
+                            onPointerDown={(e) => { e.preventDefault(); executeSearch(term); }}
                           >
                             <div className="autocomplete-icon">
                               <Search size={16} />
@@ -2218,7 +2304,8 @@ export default function App() {
                           <div
                             key={i}
                             className="autocomplete-item"
-                            onMouseDown={() => executeSearch(art.name)}
+                            onClick={() => executeSearch(art.name)}
+                            onPointerDown={(e) => { e.preventDefault(); executeSearch(art.name); }}
                           >
                             <img
                               src={art.imageUrl || FALLBACK_ARTIST}
@@ -2242,7 +2329,8 @@ export default function App() {
                           <div
                             key={i}
                             className="autocomplete-item"
-                            onMouseDown={() => executeSearch(s.title)}
+                            onClick={() => executeSearch(s.title)}
+                            onPointerDown={(e) => { e.preventDefault(); executeSearch(s.title); }}
                           >
                             <img
                               src={s.imageUrl || FALLBACK_COVER}
@@ -2261,7 +2349,8 @@ export default function App() {
                     {(!suggestions.suggestions?.length && !suggestions.songs?.length && !suggestions.artists?.length) && (
                       <div
                         className="autocomplete-item"
-                        onMouseDown={() => executeSearch(searchQuery)}
+                        onClick={() => executeSearch(searchQuery)}
+                        onPointerDown={(e) => { e.preventDefault(); executeSearch(searchQuery); }}
                       >
                         <div className="autocomplete-icon">
                           <Search size={16} />
@@ -2277,8 +2366,8 @@ export default function App() {
             )}
           </div>
 
-          {/* Quick Demo Logins & Actions */}
-          <div className="header-actions">
+          {/* Quick Demo Logins & Actions (Desktop View) */}
+          <div className="header-actions desktop-header-actions">
             {!currentUser && (
               <>
                 <button
@@ -2308,10 +2397,18 @@ export default function App() {
             )}
 
             {currentUser && (
-              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
                 <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
                   Welcome back, <strong style={{ color: '#fff' }}>{currentUser.name}</strong>
                 </span>
+                <button
+                  className="top-logout-btn"
+                  onClick={handleLogout}
+                  title="Power Off / Logout"
+                >
+                  <LogOut size={14} />
+                  <span>Log Out</span>
+                </button>
               </div>
             )}
           </div>
@@ -3080,6 +3177,26 @@ export default function App() {
               ) : (
                 /* All Playlists Grid */
                 <div>
+                  {currentUser && (
+                    <div className="library-user-card">
+                      <div className="library-user-info">
+                        <div className="library-user-avatar">
+                          {currentUser.name ? currentUser.name.charAt(0).toUpperCase() : 'V'}
+                        </div>
+                        <div>
+                          <div className="library-user-name">{currentUser.name}</div>
+                          <div className="library-user-meta">
+                            {currentUser.email || 'Voxa Account'} • {currentUser.role === 'ROLE_ADMIN' ? 'Studio Master' : 'Audiophile Pro'}
+                          </div>
+                        </div>
+                      </div>
+                      <button className="library-logout-btn" onClick={handleLogout} title="Log Out of Voxa">
+                        <LogOut size={15} />
+                        <span>Log Out</span>
+                      </button>
+                    </div>
+                  )}
+
                   <div className="section-header">
                     <div>
                       <h1 style={{ fontSize: '2rem', fontWeight: 800 }}>Your Playlists</h1>
@@ -3557,7 +3674,7 @@ export default function App() {
       {/* ====================================================================
           PERSISTENT BOTTOM AUDIO PLAYER
           ==================================================================== */}
-      <footer className="bottom-player">
+      <footer className={`bottom-player ${currentSong ? 'has-track' : 'no-track'}`}>
         {/* Live Synchronized Karaoke Lyric Line Ribbon (Plays live with the song) */}
         {isPlaying && currentLyrics && currentLyrics[activeLyricIndex] && (
           <div
