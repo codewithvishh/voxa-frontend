@@ -180,6 +180,10 @@ export default function App() {
   const audioRef = useRef(null);
   const wakeLockRef = useRef(null);
   const isTransitioningRef = useRef(false);
+  const handleNextSongRef = useRef(null);
+  const isRepeatRef = useRef(false);
+  const isShuffleRef = useRef(false);
+  const currentSongRef = useRef(null);
   const [currentSong, setCurrentSong] = useState(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
@@ -190,6 +194,11 @@ export default function App() {
   const [isRepeat, setIsRepeat] = useState(false);
   const [isPreloaded, setIsPreloaded] = useState(false);
   const hasTriggeredHistory = useRef(false);
+
+  // Keep refs always in sync so lock-screen event handlers never use stale closures
+  isRepeatRef.current = isRepeat;
+  isShuffleRef.current = isShuffle;
+  currentSongRef.current = currentSong;
 
   // Screen Wake Lock API helper to prevent mobile CPU/screen sleep during active playback
   const requestWakeLock = async () => {
@@ -496,12 +505,36 @@ export default function App() {
     };
 
     const handleEnded = () => {
-      if (isRepeat) {
+      // CRITICAL: Use refs, never stale closure values, for lock-screen reliability
+      if (isRepeatRef.current) {
         audio.currentTime = 0;
         audio.play().catch(console.error);
-      } else {
-        handleNextSong();
+        return;
       }
+      // Primary path: call the always-current handleNextSong via ref
+      if (handleNextSongRef.current) {
+        try {
+          handleNextSongRef.current();
+        } catch (e) {
+          console.warn('[Voxa Audio] handleNextSong threw, using emergency fallback:', e);
+        }
+      }
+      // Emergency inline fallback: if after 2 seconds audio is still paused/ended,
+      // directly load next track from queueRef to guarantee continuity on lock-screen
+      setTimeout(() => {
+        if (audio.paused || audio.ended) {
+          const q = queueRef.current || [];
+          const idx = queueIndexRef.current || 0;
+          const nextIdx = (idx + 1) < q.length ? idx + 1 : 0;
+          const fallbackTrack = q[nextIdx];
+          if (fallbackTrack && fallbackTrack.audioUrl) {
+            console.log('[Voxa Audio] Emergency fallback: forcing next track from queue');
+            queueIndexRef.current = nextIdx;
+            audio.src = fallbackTrack.audioUrl;
+            audio.play().catch(() => {});
+          }
+        }
+      }, 2000);
     };
 
     const handlePlay = () => {
@@ -662,23 +695,19 @@ export default function App() {
 
     isTransitioningRef.current = true;
     hasTriggeredHistory.current = false;
-    setCurrentSong(track);
 
     const targetVolume = isMuted ? 0 : volume;
     try {
       audio.volume = targetVolume;
     } catch {}
 
-    // CRITICAL: NEVER call audio.pause() when transitioning to the next track on mobile lock screen!
-    // Directly setting audio.src and calling audio.play() seamlessly updates the media stream
-    // while keeping the native OS audio session uninterrupted.
+    // CRITICAL: NEVER call audio.pause() or audio.load() when transitioning on mobile lock screen!
+    // Just set audio.src — the browser auto-loads. Calling load() resets the media element
+    // and loses the OS audio session on backgrounded/locked screens.
+    // Also do NOT set currentTime = 0 before play — it aborts the loading pipeline.
     if (audio.src !== track.audioUrl) {
       audio.src = track.audioUrl;
       audio.preload = 'auto';
-      if (!keepTime) {
-        audio.currentTime = 0;
-      }
-      audio.load();
     }
 
     // Immediately update MediaSession metadata for lock screen
@@ -698,13 +727,22 @@ export default function App() {
       } catch (e) {}
     }
 
+    // CRITICAL: Call audio.play() FIRST, then update React state AFTER success.
+    // On lock-screen, play() must happen in the synchronous call chain from the ended event.
+    // State updates that trigger re-renders before play() will kill the audio session.
     const playPromise = audio.play();
     if (playPromise !== undefined) {
       playPromise
         .then(() => {
+          // Only update React state AFTER playback has actually started
+          setCurrentSong(track);
+          currentSongRef.current = track;
           setIsPlaying(true);
           isTransitioningRef.current = false;
           requestWakeLock();
+          if (!keepTime) {
+            audio.currentTime = 0;
+          }
         })
         .catch(err => {
           if (err.name === 'AbortError') {
@@ -712,6 +750,9 @@ export default function App() {
             return;
           }
           console.warn('[Voxa Audio] Playback deferred, awaiting canplay/loadeddata event:', err);
+          // Update song state immediately for UI even if play hasn't started yet
+          setCurrentSong(track);
+          currentSongRef.current = track;
           // On mobile lock-screen, setTimeout is suspended. We MUST listen to native DOM media events:
           const resumeOnMediaEvent = () => {
             audio.removeEventListener('canplay', resumeOnMediaEvent);
@@ -865,12 +906,13 @@ export default function App() {
   const handleNextSong = () => {
     const currentQ = queueRef.current || [];
     const curIdx = queueIndexRef.current || 0;
-    const currentTrack = currentSong;
+    // CRITICAL: Use refs for lock-screen reliability — never stale closure values
+    const currentTrack = currentSongRef.current;
     const currentNorm = currentTrack ? normalizeSongTitle(currentTrack.title) : '';
     const currentRoot = currentTrack ? getRootTitleWords(currentTrack.title) : '';
     const currentVibe = currentTrack ? detectSongVibeAndEra(currentTrack) : null;
 
-    if (isRepeat && currentTrack) {
+    if (isRepeatRef.current && currentTrack) {
       if (audioRef.current) {
         audioRef.current.currentTime = 0;
         audioRef.current.play().catch(console.error);
@@ -878,7 +920,7 @@ export default function App() {
       return;
     }
 
-    if (isShuffle && currentQ.length > 1) {
+    if (isShuffleRef.current && currentQ.length > 1) {
       const differentTracks = currentQ.filter((t, i) => {
         if (i === curIdx) return false;
         const norm = normalizeSongTitle(t.title);
@@ -982,6 +1024,9 @@ export default function App() {
       }
     }
   };
+
+  // Always keep the ref pointing to the latest handleNextSong for lock-screen event handlers
+  handleNextSongRef.current = handleNextSong;
 
   const handlePrevSong = () => {
     if (currentTime > 3 && audioRef.current) {
@@ -4884,6 +4929,7 @@ export default function App() {
       <audio
         ref={audioRef}
         preload="auto"
+        autoPlay
         playsInline
         webkit-playsinline="true"
         x-webkit-airplay="allow"
