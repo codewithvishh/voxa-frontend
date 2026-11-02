@@ -1,12 +1,52 @@
-const RAW_API_URL = import.meta.env.VITE_API_URL || '';
-const BASE_URL = (RAW_API_URL ? RAW_API_URL.replace(/\/+$/, '') : '') + '/api';
+export function getBaseApiUrl() {
+  // 1. User manual override stored on device
+  if (typeof window !== 'undefined') {
+    const saved = localStorage.getItem('voxa_api_url');
+    if (saved && saved.trim()) {
+      return saved.trim().replace(/\/+$/, '').replace(/\/api\/?$/, '') + '/api';
+    }
+  }
 
-if (typeof window !== 'undefined' && !RAW_API_URL && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
-  console.warn(
-    '[Voxa Cloud Warning] VITE_API_URL environment variable is not configured. ' +
-    'To connect your Vercel frontend to your Render backend, set VITE_API_URL=https://<your-render-backend-url>.onrender.com in Vercel Project Settings -> Environment Variables, and redeploy.'
-  );
+  // 2. Vite environment variable baked during build
+  const envUrl = import.meta.env.VITE_API_URL;
+  if (envUrl && envUrl.trim()) {
+    return envUrl.trim().replace(/\/+$/, '').replace(/\/api\/?$/, '') + '/api';
+  }
+
+  // 3. Android Capacitor native runtime check (where window.location is localhost / capacitor)
+  if (typeof window !== 'undefined') {
+    const isCapacitor = Boolean(
+      window.Capacitor !== undefined ||
+      window.location.protocol === 'capacitor:' ||
+      (window.location.hostname === 'localhost' && !window.location.port)
+    );
+    if (isCapacitor) {
+      return 'https://voxa-backend.onrender.com/api';
+    }
+  }
+
+  // 4. Fallback for local web development proxy
+  return '/api';
 }
+
+export function setCustomApiUrl(rawUrl) {
+  if (typeof window === 'undefined') return;
+  if (!rawUrl || !rawUrl.trim()) {
+    localStorage.removeItem('voxa_api_url');
+  } else {
+    let clean = rawUrl.trim();
+    if (!clean.startsWith('http://') && !clean.startsWith('https://')) {
+      clean = 'https://' + clean;
+    }
+    localStorage.setItem('voxa_api_url', clean.replace(/\/+$/, '').replace(/\/api\/?$/, ''));
+  }
+}
+
+export function getCurrentServerUrl() {
+  return getBaseApiUrl().replace(/\/api\/?$/, '');
+}
+
+const BASE_URL = getBaseApiUrl();
 
 // Built-in verified seed tracks (guarantees the home feed never renders empty or gets stuck on loading)
 const INITIAL_FALLBACK_SONGS = [
@@ -346,7 +386,8 @@ function getAuthHeaders(endpoint = '') {
 }
 
 async function request(endpoint, options = {}) {
-  const url = `${BASE_URL}${endpoint}`;
+  const currentBase = getBaseApiUrl();
+  const url = `${currentBase}${endpoint}`;
   const headers = {
     ...getAuthHeaders(endpoint),
     ...(options.headers || {})
@@ -731,5 +772,10 @@ export const api = {
   triggerJamendoImport: (tag = 'rock', limit = 10) => request('/admin/import', {
     method: 'POST',
     body: JSON.stringify({ tag, max: limit, limit })
-  })
+  }),
+
+  // Server configuration helpers for mobile native apps
+  getBaseApiUrl,
+  setCustomApiUrl,
+  getCurrentServerUrl
 };

@@ -2654,14 +2654,17 @@
 .modal-backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.8);
+  background: rgba(0, 0, 0, 0.85);
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 120;
+  z-index: 1200;
   animation: fadeIn 0.2s ease;
+  padding: max(env(safe-area-inset-top, 0px), 36px) 16px max(env(safe-area-inset-bottom, 0px), 24px);
+  overflow-y: auto;
+  box-sizing: border-box;
 }
 
 @keyframes fadeIn {
@@ -3654,9 +3657,12 @@
   }
 
   .top-header {
-    padding: 12px 14px 12px !important;
+    padding-top: max(env(safe-area-inset-top, 0px), 38px) !important;
+    padding-left: calc(env(safe-area-inset-left, 0px) + 14px) !important;
+    padding-right: calc(env(safe-area-inset-right, 0px) + 14px) !important;
+    padding-bottom: 12px !important;
     height: auto !important;
-    min-height: 108px !important;
+    min-height: calc(108px + max(env(safe-area-inset-top, 0px), 38px)) !important;
     display: flex !important;
     flex-direction: column !important;
     align-items: stretch !important;
@@ -3887,15 +3893,16 @@
     bottom: 0 !important;
     left: 0 !important;
     right: 0 !important;
-    height: 64px !important;
+    height: calc(64px + max(env(safe-area-inset-bottom, 0px), 10px)) !important;
     background: rgba(8, 10, 16, 0.96) !important;
     backdrop-filter: blur(28px) saturate(200%) !important;
     -webkit-backdrop-filter: blur(28px) saturate(200%) !important;
     border-top: 1px solid var(--border-subtle) !important;
     z-index: 1000 !important;
-    align-items: center !important;
+    align-items: flex-start !important;
     justify-content: space-around !important;
-    padding: 0 6px !important;
+    padding: 6px 6px max(env(safe-area-inset-bottom, 0px), 10px) !important;
+    box-sizing: border-box !important;
   }
 
   .mobile-nav-item {

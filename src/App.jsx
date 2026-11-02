@@ -4266,6 +4266,9 @@ export default function App() {
                       value={otpCode}
                       onChange={(e) => setOtpCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
                     />
+                    <div style={{ fontSize: '0.78rem', color: '#94a3b8', textAlign: 'center', marginTop: '6px' }}>
+                      (Demo / Universal test code: <strong style={{ color: '#ff2a51' }}>123456</strong>)
+                    </div>
                   </div>
 
                   <button
@@ -4487,6 +4490,30 @@ export default function App() {
                 >
                   Admin Demo
                 </button>
+              </div>
+
+              {/* Mobile Server Host Status & Custom URL Config */}
+              <div style={{ marginTop: '14px', textAlign: 'center' }}>
+                <span
+                  style={{
+                    fontSize: '0.73rem',
+                    color: 'rgba(255, 255, 255, 0.45)',
+                    cursor: 'pointer',
+                    textDecoration: 'underline'
+                  }}
+                  onClick={() => {
+                    const current = api.getCurrentServerUrl ? api.getCurrentServerUrl() : 'https://voxa-backend.onrender.com';
+                    const newUrl = window.prompt('Enter Voxa Backend URL (e.g. https://voxa-backend.onrender.com or http://192.168.1.x:8080):', current);
+                    if (newUrl !== null) {
+                      api.setCustomApiUrl(newUrl);
+                      alert('Server endpoint updated to: ' + (newUrl || 'Default Render Cloud') + '\nReloading Voxa...');
+                      window.location.reload();
+                    }
+                  }}
+                  title="Click to configure backend API URL"
+                >
+                  API Server: {api.getCurrentServerUrl ? api.getCurrentServerUrl().replace(/^https?:\/\//, '') : 'voxa-backend.onrender.com'} (Change)
+                </span>
               </div>
             </div>
           </div>

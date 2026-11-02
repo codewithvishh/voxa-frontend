@@ -21,4 +21,10 @@ dist-ssr
 *.ntvs*
 *.njsproj
 *.sln
-*.sw?
+# Android Build Outputs
+android/.gradle
+android/build
+android/app/build
+android/capacitor-cordova-android-plugins/build
+*.keystore
+.env

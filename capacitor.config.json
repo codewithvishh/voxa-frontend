@@ -1,0 +1,13 @@
+{
+  "appId": "com.codewithvishh.voxamusic",
+  "appName": "Voxa Music",
+  "webDir": "dist",
+  "plugins": {
+    "CapacitorCookies": {
+      "enabled": true
+    }
+  },
+  "android": {
+    "allowMixedContent": true
+  }
+}
