@@ -201,6 +201,16 @@ export default function App() {
   currentSongRef.current = currentSong;
 
   // Screen Wake Lock API helper to prevent mobile CPU/screen sleep during active playback
+  const ensureMediaNotificationPermission = async () => {
+    if (typeof window !== 'undefined' && 'Notification' in window) {
+      if (Notification.permission === 'default') {
+        try {
+          await Notification.requestPermission();
+        } catch (e) {}
+      }
+    }
+  };
+
   const requestWakeLock = async () => {
     if (typeof navigator !== 'undefined' && 'wakeLock' in navigator && !wakeLockRef.current) {
       try {
@@ -494,9 +504,9 @@ export default function App() {
     const handleTimeUpdate = () => {
       setCurrentTime(audio.currentTime);
       // FRD Requirement: If played >= 30 seconds, record play history
-      if (audio.currentTime >= 30 && !hasTriggeredHistory.current && currentSong) {
+      if (audio.currentTime >= 30 && !hasTriggeredHistory.current && currentSongRef.current) {
         hasTriggeredHistory.current = true;
-        api.recordPlay(currentSong.id, Math.floor(audio.currentTime)).catch(() => {});
+        api.recordPlay(currentSongRef.current.id, Math.floor(audio.currentTime)).catch(() => {});
       }
     };
 
@@ -519,22 +529,22 @@ export default function App() {
           console.warn('[Voxa Audio] handleNextSong threw, using emergency fallback:', e);
         }
       }
-      // Emergency inline fallback: if after 2 seconds audio is still paused/ended,
+      // Fast guaranteed fallback: if after 800ms audio is still paused or ended,
       // directly load next track from queueRef to guarantee continuity on lock-screen
       setTimeout(() => {
         if (audio.paused || audio.ended) {
           const q = queueRef.current || [];
-          const idx = queueIndexRef.current || 0;
-          const nextIdx = (idx + 1) < q.length ? idx + 1 : 0;
+          const curIdx = queueIndexRef.current || 0;
+          let nextIdx = curIdx + 1;
+          if (nextIdx >= q.length) nextIdx = 0;
           const fallbackTrack = q[nextIdx];
           if (fallbackTrack && fallbackTrack.audioUrl) {
-            console.log('[Voxa Audio] Emergency fallback: forcing next track from queue');
+            console.log('[Voxa Audio] Lock-screen autoplay guarantee: advancing to next track', fallbackTrack.title);
             queueIndexRef.current = nextIdx;
-            audio.src = fallbackTrack.audioUrl;
-            audio.play().catch(() => {});
+            playTrackDirect(fallbackTrack);
           }
         }
-      }, 2000);
+      }, 800);
     };
 
     const handlePlay = () => {
@@ -595,7 +605,7 @@ export default function App() {
       audio.removeEventListener('stalled', handleStalled);
       audio.removeEventListener('error', handleError);
     };
-  }, [currentSong?.id, isRepeat]);
+  }, []);
 
   // Volume & Mute Sync (Safe for iOS hardware volume)
   useEffect(() => {
@@ -693,6 +703,8 @@ export default function App() {
     const audio = audioRef.current;
     if (!audio) return;
 
+    ensureMediaNotificationPermission();
+
     isTransitioningRef.current = true;
     hasTriggeredHistory.current = false;
 
@@ -701,26 +713,33 @@ export default function App() {
       audio.volume = targetVolume;
     } catch {}
 
-    // CRITICAL: NEVER call audio.pause() or audio.load() when transitioning on mobile lock screen!
-    // Just set audio.src — the browser auto-loads. Calling load() resets the media element
-    // and loses the OS audio session on backgrounded/locked screens.
-    // Also do NOT set currentTime = 0 before play — it aborts the loading pipeline.
-    if (audio.src !== track.audioUrl) {
+    const isDifferentSrc = audio.src !== track.audioUrl;
+    if (isDifferentSrc) {
       audio.src = track.audioUrl;
       audio.preload = 'auto';
     }
 
-    // Immediately update MediaSession metadata for lock screen
+    if (!keepTime && (isDifferentSrc || audio.ended || (audio.duration && audio.currentTime >= audio.duration - 0.5))) {
+      try {
+        audio.currentTime = 0;
+      } catch (e) {}
+    }
+
+    // Immediately update MediaSession metadata for Android/iOS lock screen card
     if (typeof navigator !== 'undefined' && 'mediaSession' in navigator && window.MediaMetadata) {
       try {
+        const cover = track.imageUrl || FALLBACK_COVER;
         navigator.mediaSession.metadata = new window.MediaMetadata({
           title: track.title || 'Voxa Music',
           artist: track.artistName || 'Various Artists',
           album: track.albumName || 'Single',
           artwork: [
-            { src: track.imageUrl || FALLBACK_COVER, sizes: '96x96', type: 'image/jpeg' },
-            { src: track.imageUrl || FALLBACK_COVER, sizes: '192x192', type: 'image/jpeg' },
-            { src: track.imageUrl || FALLBACK_COVER, sizes: '512x512', type: 'image/jpeg' }
+            { src: cover, sizes: '96x96' },
+            { src: cover, sizes: '128x128' },
+            { src: cover, sizes: '192x192' },
+            { src: cover, sizes: '256x256' },
+            { src: cover, sizes: '384x384' },
+            { src: cover, sizes: '512x512' }
           ]
         });
         navigator.mediaSession.playbackState = 'playing';
@@ -728,21 +747,15 @@ export default function App() {
     }
 
     // CRITICAL: Call audio.play() FIRST, then update React state AFTER success.
-    // On lock-screen, play() must happen in the synchronous call chain from the ended event.
-    // State updates that trigger re-renders before play() will kill the audio session.
     const playPromise = audio.play();
     if (playPromise !== undefined) {
       playPromise
         .then(() => {
-          // Only update React state AFTER playback has actually started
           setCurrentSong(track);
           currentSongRef.current = track;
           setIsPlaying(true);
           isTransitioningRef.current = false;
           requestWakeLock();
-          if (!keepTime) {
-            audio.currentTime = 0;
-          }
         })
         .catch(err => {
           if (err.name === 'AbortError') {
@@ -823,6 +836,8 @@ export default function App() {
         }
       }
 
+      queueRef.current = uniqueList;
+      queueIndexRef.current = 0;
       setPlaybackQueue(uniqueList);
       setQueueIndex(0);
       preloadSimilarEraSongs(song, uniqueList);
@@ -848,6 +863,8 @@ export default function App() {
         }
       }
 
+      queueRef.current = initialSameEraQueue;
+      queueIndexRef.current = 0;
       setPlaybackQueue(initialSameEraQueue);
       setQueueIndex(0);
 
@@ -868,7 +885,9 @@ export default function App() {
                 additions.push(item);
               }
             }
-            return [...prev, ...additions];
+            const updated = [...prev, ...additions];
+            queueRef.current = updated;
+            return updated;
           });
         }
       }).catch(err => {
@@ -1144,14 +1163,18 @@ export default function App() {
   useEffect(() => {
     if ('mediaSession' in navigator && currentSong) {
       try {
+        const cover = currentSong.imageUrl || FALLBACK_COVER;
         navigator.mediaSession.metadata = new window.MediaMetadata({
           title: currentSong.title || 'Voxa Music',
           artist: currentSong.artistName || 'Various Artists',
           album: currentSong.albumName || 'Single',
           artwork: [
-            { src: currentSong.imageUrl || FALLBACK_COVER, sizes: '96x96', type: 'image/jpeg' },
-            { src: currentSong.imageUrl || FALLBACK_COVER, sizes: '192x192', type: 'image/jpeg' },
-            { src: currentSong.imageUrl || FALLBACK_COVER, sizes: '512x512', type: 'image/jpeg' }
+            { src: cover, sizes: '96x96' },
+            { src: cover, sizes: '128x128' },
+            { src: cover, sizes: '192x192' },
+            { src: cover, sizes: '256x256' },
+            { src: cover, sizes: '384x384' },
+            { src: cover, sizes: '512x512' }
           ]
         });
 
@@ -1173,7 +1196,13 @@ export default function App() {
           }
         });
         navigator.mediaSession.setActionHandler('previoustrack', () => handlePrevSong());
-        navigator.mediaSession.setActionHandler('nexttrack', () => handleNextSong());
+        navigator.mediaSession.setActionHandler('nexttrack', () => {
+          if (handleNextSongRef.current) {
+            handleNextSongRef.current();
+          } else {
+            handleNextSong();
+          }
+        });
         navigator.mediaSession.setActionHandler('seekto', (details) => {
           if (details.seekTime != null && audioRef.current) {
             audioRef.current.currentTime = details.seekTime;
@@ -4935,13 +4964,13 @@ export default function App() {
         x-webkit-airplay="allow"
         style={{
           position: 'fixed',
-          top: -9999,
-          left: -9999,
+          bottom: 0,
+          left: 0,
           width: '1px',
           height: '1px',
-          opacity: 0.001,
+          opacity: 0.01,
           pointerEvents: 'none',
-          zIndex: -9999
+          zIndex: 1
         }}
       />
 
